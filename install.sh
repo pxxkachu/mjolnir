@@ -312,7 +312,8 @@ pacstrap -K /mnt \
   sudo git nano man-db man-pages texinfo \
   networkmanager openssh base-devel go pacman-contrib \
   gnome gnome-tweaks \
-  pipewire pipewire-pulse pipewire-alsa wireplumber \
+  pipewire pipewire-pulse pipewire-alsa wireplumber pavucontrol rtkit \
+  ttf-liberation noto-fonts \
   mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon \
   gamemode lib32-gamemode nvme-cli smartmontools cpupower
 
@@ -405,7 +406,7 @@ ENTRY
 
 mkinitcpio -P
 
-systemctl enable NetworkManager gdm sshd systemd-timesyncd fstrim.timer
+systemctl enable NetworkManager gdm sshd systemd-timesyncd fstrim.timer rtkit-daemon
 EOF
 then
   err_exit "arch-chroot configuration failed. See messages above. /mnt may still be mounted for inspection."

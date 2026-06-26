@@ -293,7 +293,8 @@ base-devel go pacman-contrib
 
 ```
 gnome gnome-tweaks
-pipewire pipewire-pulse pipewire-alsa wireplumber
+pipewire pipewire-pulse pipewire-alsa wireplumber pavucontrol rtkit
+ttf-liberation noto-fonts
 mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon
 ```
 
@@ -469,9 +470,10 @@ Rebuild after all config in place. No custom hooks needed for plain ext4 without
 | `sshd.service` | Remote SSH (Tailscale post-install) |
 | `systemd-timesyncd.service` | Time sync |
 | `fstrim.timer` | NVMe weekly TRIM |
+| `rtkit-daemon` | PipeWire realtime audio priority |
 
 ```bash
-systemctl enable NetworkManager gdm sshd systemd-timesyncd fstrim.timer
+systemctl enable NetworkManager gdm sshd systemd-timesyncd fstrim.timer rtkit-daemon
 ```
 
 ### Phase 12 — Passwords

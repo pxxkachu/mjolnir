@@ -16,19 +16,19 @@ Run these steps on the **official Arch Linux live ISO** (UEFI boot, networking r
 
 ### Clone the repo and run `install.sh`
 
-Replace `<REPO_URL>` with your git remote (HTTPS or SSH):
+Repo: [github.com/pxxkachu/mjolnir](https://github.com/pxxkachu/mjolnir)
 
 ```bash
 pacman -Sy --needed git
-git clone <REPO_URL> /tmp/mjolnir
+git clone https://github.com/pxxkachu/mjolnir.git /tmp/mjolnir
 cd /tmp/mjolnir
 bash install.sh
 ```
 
-Example if the repo is hosted on GitHub:
+SSH clone (if you use GitHub SSH keys):
 
 ```bash
-git clone https://github.com/you/mjolnir.git /tmp/mjolnir
+git clone git@github.com:pxxkachu/mjolnir.git /tmp/mjolnir
 cd /tmp/mjolnir
 bash install.sh
 ```
@@ -59,7 +59,7 @@ When it finishes, remove the install medium and reboot. GDM autologs into GNOME 
 
 Steps below run **after** the first successful boot into the installed system.
 
-All commands include `sudo` where needed. Section **1** (paru) **must not** use sudo — AUR builds run as your normal user.
+All commands include `sudo` where needed. Section **2** (paru) **must not** use sudo — AUR builds run as your normal user.
 
 ---
 
@@ -79,6 +79,9 @@ findmnt /home
 
 # GDM autologin configured
 grep -E '^AutomaticLogin' /etc/gdm/custom.conf
+
+# Fonts and audio mixer (installed by install.sh)
+pacman -Q ttf-liberation noto-fonts pavucontrol rtkit
 ```
 
 Update the system before adding more packages:
@@ -89,7 +92,23 @@ sudo pacman -Syu
 
 ---
 
-## 1. Install paru (AUR helper)
+## 1. Enable RealtimeKit (PipeWire low latency)
+
+`install.sh` installs **`rtkit`** and enables **`rtkit-daemon`**. RealtimeKit lets PipeWire request real-time CPU priority safely, which reduces crackling when the CPU is under load (gaming).
+
+Confirm the package is installed and the service is enabled and running:
+
+```bash
+pacman -Q rtkit
+sudo systemctl enable --now rtkit-daemon
+systemctl status rtkit-daemon
+```
+
+If status shows **active**, PipeWire can use RealtimeKit on demand. The daemon may also start via D-Bus activation when audio first needs it; enabling the unit ensures it is allowed to run at boot.
+
+---
+
+## 2. Install paru (AUR helper)
 
 Builds from source against your installed `pacman` / `libalpm`. `install.sh` already installed `base-devel`, `go`, and `git`.
 
@@ -107,7 +126,7 @@ rm -rf /tmp/paru
 
 ---
 
-## 2. Install and authenticate Tailscale
+## 3. Install and authenticate Tailscale
 
 ```bash
 sudo pacman -S tailscale
@@ -151,7 +170,7 @@ ff02::2     ip6-allrouters
 
 ---
 
-## 3. Install gaming stack
+## 4. Install gaming stack
 
 Mesa multilib (`mesa`, `lib32-mesa`, `vulkan-radeon`, `lib32-vulkan-radeon`) was installed by `install.sh`.
 
@@ -190,9 +209,11 @@ Verify Vulkan (RADV):
 vulkaninfo --summary 2>/dev/null | head -20
 ```
 
+Per-app volume and output routing: launch **PulseAudio Volume Control** (`pavucontrol`) from the app grid — installed by `install.sh`.
+
 ---
 
-## 4. Performance tuning (NVMe, RAM, CPU, GPU)
+## 5. Performance tuning (NVMe, RAM, CPU, GPU)
 
 Summary of what `install.sh` already applied vs optional tweaks below.
 
@@ -205,6 +226,7 @@ Summary of what `install.sh` already applied vs optional tweaks below.
 | **CPU microcode** | `amd-ucode` in systemd-boot entry | Security + stability fixes for 9800X3D |
 | **RAM (maps)** | `vm.max_map_count=1048576` | Required by Steam/Proton and some AAA titles |
 | **GameMode** | Package + `/etc/gamemode.ini` + `gamemode` group | Raises CPU governor and GPU power level while games run |
+| **Audio RT** | `rtkit` + `rtkit-daemon` | PipeWire low-latency scheduling (see [section 1](#1-enable-realtimekit-pipewire-low-latency)) |
 | **Monitoring** | `nvme-cli`, `smartmontools`, `cpupower` | Health checks and governor inspection |
 
 Verify TRIM timer:
@@ -263,7 +285,7 @@ cat /sys/block/nvme0n1/queue/scheduler
 | Tweak | Recommendation |
 |-------|----------------|
 | **zram** | **Skip** — 96 GB makes compressed RAM swap unnecessary |
-| **swap file** | Optional 16 GiB buffer — see [section 5](#5-optional-16-gib-swap-file) |
+| **swap file** | Optional 16 GiB buffer — see [section 6](#6-optional-16-gib-swap-file) |
 | **`vm.swappiness`** | Set to `10` only if you create a swap file |
 | **`vm.max_map_count`** | Already `1048576` from install |
 
@@ -333,7 +355,7 @@ echo "$XDG_SESSION_TYPE"                   # wayland
 
 ---
 
-## 5. Optional: 16 GiB swap file
+## 6. Optional: 16 GiB swap file
 
 With 96 GB RAM, swap is not required for normal use. Skip this section unless you want an OOM safety buffer.
 
@@ -359,7 +381,7 @@ sudo sysctl --system
 
 ---
 
-## 6. Timezone
+## 7. Timezone
 
 Install used UTC. Set your local timezone:
 
@@ -372,13 +394,24 @@ Or use **Settings → Date & Time** in GNOME.
 
 ---
 
-## 7. Display tweaks (ASUS PG32UCDP OLED, 4K)
+## 8. Display tweaks (ASUS PG32UCDP OLED, 4K)
 
 ### Variable refresh rate (VRR)
 
 1. **Settings → Displays** — confirm 4K resolution and expected refresh rate.
 2. **Settings → Displays → Variable Refresh Rate** — set to **Always** or **Automatic** (wording varies by GNOME version).
 3. Use **DisplayPort** for full bandwidth.
+4. Enable the mutter VRR experimental feature (log out and back in after):
+
+```bash
+gsettings set org.gnome.mutter experimental-features "['variable-refresh-rate']"
+```
+
+If you also use fractional scaling (below), combine both in one setting:
+
+```bash
+gsettings set org.gnome.mutter experimental-features "['variable-refresh-rate', 'scale-monitor-framebuffer']"
+```
 
 Verify VRR is active (while a full-screen app runs):
 
@@ -402,6 +435,8 @@ Fractional scaling: **Settings → Displays → Scale** → enable fractional op
 gsettings set org.gnome.mutter experimental-features "['scale-monitor-framebuffer']"
 ```
 
+If VRR is already enabled (see above), use the combined command instead of overwriting it.
+
 Log out and back in after changing scaling experiments.
 
 ### OLED burn-in mitigation
@@ -420,7 +455,7 @@ sudo pacman -S gnome-screensaver
 
 ---
 
-## 8. Disable lock screen on resume (optional)
+## 9. Disable lock screen on resume (optional)
 
 GDM autologin skips the login screen at boot, but suspend may still show a lock screen. To disable automatic lock on suspend:
 
@@ -433,7 +468,7 @@ gsettings set org.gnome.desktop.session idle-delay 0
 
 ---
 
-## 9. SSH hardening (optional)
+## 10. SSH hardening (optional)
 
 `sshd` is enabled by install. For Tailscale-only access, consider listening on the tailnet interface or using `tailscale serve` / ACLs in the Tailscale admin console.
 
@@ -446,7 +481,7 @@ ssh localhost
 
 ---
 
-## 10. Full system update workflow
+## 11. Full system update workflow
 
 After paru is installed, keep the system current:
 
@@ -470,6 +505,7 @@ sudo pacman -Syu
 | AMD GPU driver | `lspci -k \| grep -A2 VGA` → `Kernel driver in use: amdgpu` |
 | Vulkan | `vulkaninfo --summary` runs without `ERROR_INITIALIZATION_FAILED` |
 | Audio | `wpctl status` — PipeWire default sink present |
+| RealtimeKit | `systemctl status rtkit-daemon` — enabled, active |
 | Tailscale | `tailscale status` — connected |
 | Steam | Launch Steam, sign in, install a Proton game |
 | Autologin | Reboot — lands on desktop without GDM password |
