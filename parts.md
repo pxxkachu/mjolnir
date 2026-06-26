@@ -3,4 +3,5 @@ GPU: AMD 7900XT Reference 24 GB
 Motherboard: Gigabyte B850I Aorus Pro
 OS Drive: Samsung 990 Pro 2TB
 Monitor: Asus PG32UCDP OLED 4K
-OS: Arch Linux
+OS: Arch Linux, Wayland, Gnome
+Primary goals: gaming, light coding, homelab control
