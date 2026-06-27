@@ -170,12 +170,12 @@ Exact root size is flexible; 200 GiB leaves ample room for `/` without swap. Adj
 | Distribution | **Arch Linux** (rolling) |
 | Init | systemd |
 | Display server | **Wayland** |
-| Desktop | **GNOME** |
-| Session | `gnome-wayland` (default on Arch GNOME) |
+| Desktop | **GNOME** (minimal: Console, Files, Settings, Tweaks) |
+| Session | `gnome-wayland` via GDM **autologin** |
 | Shell / terminal | TBD |
 | AUR helper | **paru** (build from AUR git clone — not `paru-bin`) |
 
-**Install notes:** Install `gnome`, `gnome-tweaks`, and `pipewire` + `wireplumber` for audio. For gaming: `steam`, `gamemode`, `mangohud`. Install **Tailscale** for homelab remote access. Optional containers (Docker/distrobox) deferred to post-install.
+**Install notes:** Minimal GNOME via `install.sh` — `gnome-console`, `nautilus`, `gnome-control-center`, `gnome-tweaks`, **Firefox**; plus `gnome-browser-connector`, `bluez`, PipeWire. **GDM autologin** and **systemd-boot** (entry `arch`, timeout 0). Gaming: `steam`, etc. in [`post_install.md`](post_install.md).
 
 ---
 
@@ -287,8 +287,8 @@ os:
   distro: arch
   compositor: wayland
   de: gnome
-  gdm_autologin: false
-  bootloader: refind
+  gdm_autologin: true
+  bootloader: systemd-boot
 
 aur_helper:
   name: paru

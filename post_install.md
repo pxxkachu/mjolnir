@@ -51,7 +51,7 @@ bash install.sh
 | Password | root, then your user |
 | Confirmation | type `ERASE` to destroy the selected disk |
 
-When it finishes, remove the install medium and reboot. Log in at GDM (GNOME Wayland). Then continue with **Post-install** below (on the installed system, mostly as your normal user).
+When it finishes, remove the install medium and reboot. GDM autologs into GNOME Wayland. Then continue with **Post-install** below (on the installed system, mostly as your normal user).
 
 ---
 
@@ -77,11 +77,16 @@ lspci -k | grep -A3 'VGA\|Display'
 # Separate /home mounted
 findmnt /home
 
-# rEFInd boot config present
-test -f /boot/refind_linux.conf && test -f /boot/EFI/refind/refind.conf
+# systemd-boot entry present
+test -f /boot/loader/entries/arch.conf && test -f /boot/loader/loader.conf
 
-# Fonts and audio mixer (installed by install.sh)
-pacman -Q ttf-liberation noto-fonts pavucontrol rtkit
+# GDM autologin configured
+grep -E '^AutomaticLogin(Enable)?=' /etc/gdm/custom.conf
+
+# Base packages (installed by install.sh)
+pacman -Q gnome-console nautilus gnome-control-center gnome-tweaks \
+  firefox bluez bluez-utils gnome-browser-connector rtkit
+systemctl is-enabled bluetooth
 ```
 
 Update the system before adding more packages:
@@ -178,30 +183,56 @@ Mesa multilib (`mesa`, `lib32-mesa`, `vulkan-radeon`, `lib32-vulkan-radeon`) was
 sudo pacman -S --needed steam mangohud lib32-mangohud
 ```
 
-`gamemode`, `lib32-gamemode`, `nvme-cli`, `smartmontools`, and `cpupower` were installed by `install.sh`. Your user was added to the **`gamemode`** group and `/etc/gamemode.ini` was configured for CPU governor + AMD GPU `high` performance level while games run.
+`gamemode`, `lib32-gamemode`, and `/etc/gamemode.ini` were installed by `install.sh`. **Group membership and the user daemon are not configured at install** — do that once below before relying on GameMode in Steam.
 
-Log out and back in once so group membership applies (or reboot after install).
+### Configure GameMode
 
-Verify GameMode:
+Required for CPU governor changes, GPU performance level, and a passing `gamemoded -t`. Based on the [Arch GameMode wiki](https://wiki.archlinux.org/title/GameMode) and common Arch fixes ([GitHub #452](https://github.com/FeralInteractive/gamemode/issues/452)).
+
+**1. Add your user to the `gamemode` group**
 
 ```bash
-gamemoded -t
-systemctl --user status gamemoded
+getent group gamemode || sudo groupadd -r gamemode
+sudo usermod -aG gamemode "$USER"
 ```
 
-Enable Steam Play for Proton on titles that need it: Steam → Settings → Compatibility → **Enable Steam Play for all other titles**.
+**2. Polkit must read `gamemode.rules`**
 
-Optional launch options for heavy titles (Steam → game → Properties → Launch Options):
+```bash
+sudo chmod 755 /usr/share/polkit-1/rules.d
+```
+
+**3. Enable the user daemon** (do not use `sudo systemctl` for this service)
+
+```bash
+systemctl --user enable --now gamemoded
+```
+
+**4. Apply group membership** — log out and back in, or reboot.
+
+**5. Verify**
+
+```bash
+groups | grep gamemode
+systemctl --user status gamemoded
+gamemoded -t
+```
+
+All tests should pass. If governor/GPU tests fail, recheck steps 1–2 and that GPU options are only in **`/etc/gamemode.ini`** (not `~/.config/gamemode.ini` — user config blocks “unsafe” GPU settings).
+
+**Steam launch option** (per game → Properties → Launch Options):
 
 ```text
 gamemoderun %command%
 ```
 
-Or with an FPS overlay:
+Or with MangHud:
 
 ```text
 gamemoderun mangohud %command%
 ```
+
+Enable Steam Play for Proton: Steam → Settings → Compatibility → **Enable Steam Play for all other titles**.
 
 Verify Vulkan (RADV):
 
@@ -209,7 +240,7 @@ Verify Vulkan (RADV):
 vulkaninfo --summary 2>/dev/null | head -20
 ```
 
-Per-app volume and output routing: launch **PulseAudio Volume Control** (`pavucontrol`) from the app grid — installed by `install.sh`.
+Per-app volume and output routing: install and launch **PulseAudio Volume Control** (`sudo pacman -S pavucontrol`).
 
 ---
 
@@ -223,9 +254,9 @@ Summary of what `install.sh` already applied vs optional tweaks below.
 |------|------|-----|
 | **NVMe TRIM** | `fstrim.timer` enabled (weekly) | Preferred over continuous `discard` on ext4 — trims free blocks without write-amp under load |
 | **NVMe mounts** | `noatime` on ext4 `/` and `/home` | Fewer metadata writes on SSD |
-| **CPU microcode** | `amd-ucode` in rEFInd `refind_linux.conf` | Security + stability fixes for 9800X3D |
+| **CPU microcode** | `amd-ucode` in systemd-boot entry | Security + stability fixes for 9800X3D |
 | **RAM (maps)** | `vm.max_map_count=1048576` | Required by Steam/Proton and some AAA titles |
-| **GameMode** | Package + `/etc/gamemode.ini` + `gamemode` group | Raises CPU governor and GPU power level while games run |
+| **GameMode** | Packages + `/etc/gamemode.ini` only | Group + daemon — [§ 4 Configure GameMode](#configure-gamemode) |
 | **Audio RT** | `rtkit` + `rtkit-daemon` | PipeWire low-latency scheduling (see [section 1](#1-enable-realtimekit-pipewire-low-latency)) |
 | **Monitoring** | `nvme-cli`, `smartmontools`, `cpupower` | Health checks and governor inspection |
 
@@ -259,16 +290,16 @@ sudo fwupdmgr get-updates
 **Optional kernel param** — lowers NVMe idle power-state exit latency; slightly higher idle power. Only add if you notice storage latency spikes:
 
 ```bash
-sudo nano /boot/refind_linux.conf
+sudo nano /boot/loader/entries/arch.conf
 ```
 
-Append to the quoted options on the **Boot Arch Linux** line (before the closing `"`):
+Append to the `options` line:
 
 ```text
- nvme_core.default_ps_max_latency_us=0
+nvme_core.default_ps_max_latency_us=0
 ```
 
-Then reboot.
+Then `sudo bootctl update` if needed and reboot.
 
 **Optional udev rule** — force `none` scheduler on NVMe (usually already default on recent kernels):
 

@@ -13,8 +13,8 @@ shopt -s inherit_errexit 2>/dev/null || true
 # Arch installer for Mjolnir desktop
 # - OS: ext4 on a user-selected NVMe/SATA disk
 # - Layout: 1G EFI + 200G / + remainder /home
-# - GNOME Wayland + GDM (login screen)
-# - rEFInd UEFI boot manager (ESP mounted at /boot)
+# - GNOME Wayland + GDM autologin (minimal apps)
+# - systemd-boot + amd-ucode (ESP mounted at /boot)
 # - Interactive: disk, hostname, username, password
 # -----------------------------
 
@@ -171,42 +171,6 @@ set_passwd() {
   done
 }
 
-install_refind() {
-  local root_uuid refind_conf refind_linux
-  root_uuid="$(blkid -s UUID -o value "$ROOT_PART")"
-  [[ -n "$root_uuid" ]] || err_exit "Could not read root UUID from $ROOT_PART"
-
-  echo "== Installing rEFInd boot manager =="
-  # efivars bind lets refind-install register the NVRAM entry from chroot
-  if [[ -d /sys/firmware/efi/efivars ]]; then
-    install -d /mnt/sys/firmware/efi
-    mount --bind /sys/firmware/efi/efivars /mnt/sys/firmware/efi/efivars 2>/dev/null || true
-  fi
-
-  if ! arch-chroot /mnt refind-install; then
-    err_exit "refind-install failed. Ensure /boot is mounted and the ESP has free space."
-  fi
-
-  refind_linux="/mnt/boot/refind_linux.conf"
-  # ESP=/boot: initrd paths are relative to the FAT root (see Arch wiki rEFInd)
-  cat > "$refind_linux" <<REFINDLINUX
-"Boot Arch Linux"      "root=UUID=${root_uuid} rw initrd=amd-ucode.img initrd=initramfs-linux.img"
-"Boot fallback initrd" "root=UUID=${root_uuid} rw initrd=amd-ucode.img initrd=initramfs-linux-fallback.img"
-REFINDLINUX
-
-  refind_conf="/mnt/boot/EFI/refind/refind.conf"
-  [[ -f "$refind_conf" ]] || err_exit "refind.conf missing at $refind_conf after refind-install"
-
-  # Required for Arch kernel/initramfs pairing and %v in refind_linux.conf
-  if grep -qE '^#[[:space:]]*extra_kernel_version_strings' "$refind_conf"; then
-    sed -i 's/^#[[:space:]]*extra_kernel_version_strings /extra_kernel_version_strings /' "$refind_conf"
-  elif ! grep -qE '^extra_kernel_version_strings' "$refind_conf"; then
-    echo 'extra_kernel_version_strings "linux-lts,linux"' >> "$refind_conf"
-  fi
-
-  echo "  -> rEFInd installed (root=UUID=${root_uuid}, amd-ucode + initramfs-linux.img)"
-}
-
 echo "== Ensuring required tools exist =="
 need_cmd pacstrap    arch-install-scripts
 need_cmd genfstab    arch-install-scripts
@@ -287,8 +251,8 @@ echo "  Timezone:         $TIMEZONE (fixed)"
 echo ""
 echo "  Encryption:       none"
 echo "  Swap:             none (optional swap file in post_install.md)"
-echo "  Bootloader:       rEFInd + amd-ucode"
-echo "  Desktop:          GNOME / GDM / Wayland"
+echo "  Bootloader:       systemd-boot + amd-ucode (timeout 0)"
+echo "  Desktop:          GNOME minimal / GDM autologin / Wayland"
 echo ""
 echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 echo "  DANGER: THIS WILL ERASE ALL DATA ON: $OS_DISK"
@@ -348,10 +312,11 @@ pacstrap -K /mnt \
   e2fsprogs dosfstools \
   sudo git nano man-db man-pages texinfo \
   networkmanager openssh base-devel go pacman-contrib \
-  refind efibootmgr \
-  gnome gnome-tweaks \
-  pipewire pipewire-pulse pipewire-alsa wireplumber pavucontrol rtkit \
-  ttf-liberation noto-fonts \
+  gdm gnome-shell gnome-session mutter \
+  nautilus gnome-console gnome-control-center gnome-tweaks \
+  xdg-desktop-portal-gnome gvfs gnome-keyring \
+  gnome-browser-connector bluez bluez-utils firefox \
+  pipewire pipewire-pulse pipewire-alsa wireplumber rtkit \
   mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon \
   gamemode lib32-gamemode nvme-cli smartmontools cpupower
 
@@ -391,7 +356,6 @@ enable_multilib /etc/pacman.conf
 if ! id "${USERNAME}" &>/dev/null; then
   useradd -m -G wheel -s /bin/bash "${USERNAME}"
 fi
-usermod -aG gamemode "${USERNAME}" 2>/dev/null || true
 echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/99-wheel
 chmod 440 /etc/sudoers.d/99-wheel
 
@@ -417,28 +381,38 @@ apply_gpu_optimisations=accept-responsibility
 amd_performance_level=high
 GAMEINI
 
+install -d /etc/gdm
+cat > /etc/gdm/custom.conf <<GDM
+# GDM — mjolnir install.sh (autologin for fast boot with systemd-boot)
+[daemon]
+AutomaticLoginEnable=True
+AutomaticLogin=${USERNAME}
+GDM
+
+bootctl install
+ROOTUUID=\$(blkid -s UUID -o value "${ROOT_PART}")
+
+cat > /boot/loader/loader.conf <<LOADER
+default arch.conf
+timeout 0
+editor  no
+LOADER
+
+cat > /boot/loader/entries/arch.conf <<ENTRY
+title   arch
+linux   /vmlinuz-linux
+initrd  /amd-ucode.img
+initrd  /initramfs-linux.img
+options root=UUID=\${ROOTUUID} rw
+ENTRY
+
 mkinitcpio -P
 
-mkdir -p /etc/pacman.d/hooks
-cat > /etc/pacman.d/hooks/refind.hook <<'HOOK'
-[Trigger]
-Operation=Upgrade
-Type=Package
-Target=refind
-
-[Action]
-Description=Updating rEFInd on ESP
-When=PostTransaction
-Exec=/usr/bin/refind-install
-HOOK
-
-systemctl enable NetworkManager gdm sshd systemd-timesyncd fstrim.timer rtkit-daemon
+systemctl enable NetworkManager bluetooth gdm sshd systemd-timesyncd fstrim.timer rtkit-daemon
 EOF
 then
   err_exit "arch-chroot configuration failed. See messages above. /mnt may still be mounted for inspection."
 fi
-
-install_refind
 
 echo "== Set passwords =="
 set_passwd root "Root"
@@ -453,8 +427,7 @@ echo "  Installation complete"
 echo "========================================"
 echo ""
 echo "  Remove the installation medium, then reboot."
-echo "  Log in at the GDM screen as ${USERNAME} (GNOME Wayland)."
-echo "  rEFInd should appear on reboot; pick the Arch Linux entry."
+echo "  GDM will autologin as ${USERNAME} into GNOME Wayland (systemd-boot entry: arch)."
 echo ""
 echo "  Next: follow post_install.md for paru, Tailscale, Steam, and display tweaks."
 echo ""
