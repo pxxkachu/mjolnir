@@ -63,10 +63,10 @@ Design document for `install.sh`: an Arch Linux UEFI installer for the Mjolnir d
 | Locale | `en_US.UTF-8` |
 | Timezone | `UTC` (change in post-install or GNOME Settings) |
 | Keymap | `us` (`/etc/vconsole.conf`) |
-| Bootloader | **systemd-boot** (ESP mounted at `/boot`) |
+| Bootloader | **rEFInd** (ESP mounted at `/boot`) |
 | CPU microcode | **amd-ucode** (9800X3D) |
 | Desktop | **GNOME** on **Wayland** via **GDM** |
-| GDM login | **Autologin** — skip login screen for install username |
+| GDM login | **Normal login** — greeter prompts for password |
 | Mirror selection | **reflector** (HTTPS, rate-sorted) before `pacstrap` |
 
 **Rationale for non-prompted locale/timezone:** User requested only four interactive choices. Defaults are sensible; homelab/gaming box can set timezone after first login.
@@ -78,9 +78,11 @@ Design document for `install.sh`: an Arch Linux UEFI installer for the Mjolnir d
 ```
 mjolnir/
 ├── parts.md           # Hardware & decisions (source of truth)
-├── install_plan.md    # This file
-├── install.sh         # Live-ISO installer (to implement)
-└── post_install.md    # paru, Tailscale, Steam, swap file, tweaks (later)
+├── install_plan.md    # Installer design
+├── install.sh         # Live-ISO installer
+├── post_install.md    # paru, Tailscale, Steam, CoolerControl (§ 12), tweaks
+├── bios_optimize.md   # XMP, BIOS fan handoff, CO, LACT tuning
+└── bios_optimize_plan.md
 ```
 
 ---
@@ -198,8 +200,8 @@ Locale:      en_US.UTF-8 (fixed)
 Timezone:    UTC (fixed)
 Encryption:  none
 Swap:        none
-Bootloader:  systemd-boot + amd-ucode
-Desktop:     GNOME / GDM / Wayland (autologin)
+Bootloader:  rEFInd + amd-ucode
+Desktop:     GNOME / GDM / Wayland (login screen)
 ```
 
 Require: `Type ERASE to continue:` — exact match `ERASE`.
@@ -284,6 +286,7 @@ e2fsprogs dosfstools
 sudo git nano man-db man-pages texinfo
 networkmanager openssh
 base-devel go pacman-contrib
+refind efibootmgr
 ```
 
 - `go` + `base-devel`: needed to build **paru** in post-install without extra setup.
@@ -317,9 +320,12 @@ pacstrap -K /mnt \
   e2fsprogs dosfstools \
   sudo git nano man-db man-pages texinfo \
   networkmanager openssh base-devel go pacman-contrib \
+  refind efibootmgr \
   gnome gnome-tweaks \
-  pipewire pipewire-pulse pipewire-alsa wireplumber \
-  mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon
+  pipewire pipewire-pulse pipewire-alsa wireplumber pavucontrol rtkit \
+  ttf-liberation noto-fonts \
+  mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon \
+  gamemode lib32-gamemode nvme-cli smartmontools cpupower
 ```
 
 ### Phase 10 — fstab
@@ -392,68 +398,11 @@ chmod 440 /etc/sudoers.d/99-wheel
 
 Passwords set **outside** heredoc in Phase 12 (interactive `passwd`).
 
-#### 11d2. GDM autologin (skip login screen)
+#### 11d2. GDM (login screen)
 
-GDM still runs, but the greeter is bypassed and the install user lands straight in a GNOME Wayland session. Works well on this build (AMD GPU — no NVIDIA/Wayland-disable udev rule).
+GDM runs at boot and shows the greeter. The install user logs in with the password set in Phase 12. Do **not** set `WaylandEnable=false` — keep Wayland default.
 
-Append to `/etc/gdm/custom.conf` in chroot (file may not exist yet; create `[daemon]` section):
-
-```bash
-cat >> /etc/gdm/custom.conf <<GDM
-[daemon]
-AutomaticLoginEnable=True
-AutomaticLogin=${USERNAME}
-GDM
-```
-
-Or use a heredoc that writes the full file if cleaner. Do **not** set `WaylandEnable=false` — keep Wayland default.
-
-**Security note:** Anyone with physical access gets a logged-in desktop without credentials. Acceptable for a single-user home desktop; disable by removing these lines or setting `AutomaticLoginEnable=False`.
-
-**Not the same as:**
-
-| Feature | Autologin | Effect |
-|---------|-----------|--------|
-| GDM autologin | Yes (planned) | Skips password at boot → straight to desktop |
-| Lock screen after suspend | Separate | Still may prompt on wake unless disabled in GNOME Settings |
-| `gdm disable` / start GNOME from TTY | No | Would bypass GDM entirely — fragile, not recommended |
-
-If autologin fails after reboot, check from a TTY: `cat /etc/gdm/custom.conf`, `journalctl -u gdm -b`.
-
-#### 11e. systemd-boot
-
-ESP is `/boot`. Install loader:
-
-```bash
-bootctl install
-ROOTUUID=$(blkid -s UUID -o value "${ROOT_PART}")
-```
-
-`/boot/loader/loader.conf`:
-
-```ini
-default arch.conf
-timeout 3
-editor  no
-```
-
-`/boot/loader/entries/arch.conf`:
-
-```ini
-title   Arch Linux
-linux   /vmlinuz-linux
-initrd  /amd-ucode.img
-initrd  /initramfs-linux.img
-options root=UUID=${ROOTUUID} rw
-```
-
-**Notes:**
-
-- **amd-ucode** initrd must come **before** main initramfs ([Arch wiki](https://wiki.archlinux.org/title/Microcode)).
-- No `nvme_core.default_ps_max_latency_us=0` unless latency issues observed (NAS-specific in dxp480t).
-- `bootctl` auto-enables `systemd-boot-update.service` when appropriate.
-
-#### 11f. mkinitcpio
+#### 11e. mkinitcpio
 
 ```bash
 mkinitcpio -P
@@ -461,12 +410,33 @@ mkinitcpio -P
 
 Rebuild after all config in place. No custom hooks needed for plain ext4 without LUKS.
 
+#### 11f. rEFInd (after chroot)
+
+ESP is `/boot`. Packages: `refind`, `efibootmgr` (in pacstrap).
+
+1. From chroot (with efivars bind-mounted from live ISO if needed): `refind-install`
+2. Write `/boot/refind_linux.conf` with correct `root=UUID=` (live ISO root is wrong if auto-generated):
+
+```text
+"Boot Arch Linux"      "root=UUID=${ROOTUUID} rw initrd=amd-ucode.img initrd=initramfs-linux.img"
+"Boot fallback initrd" "root=UUID=${ROOTUUID} rw initrd=amd-ucode.img initrd=initramfs-linux-fallback.img"
+```
+
+3. In `/boot/EFI/refind/refind.conf`, enable `extra_kernel_version_strings "linux-lts,linux"` so Arch `vmlinuz-linux` / `%v` pairing works.
+4. Optional pacman hook at `/etc/pacman.d/hooks/refind.hook` runs `refind-install` on `refind` package upgrade.
+
+**Notes:**
+
+- **amd-ucode** initrd must be listed **before** main initramfs in `refind_linux.conf` ([Arch wiki](https://wiki.archlinux.org/title/Microcode)).
+- With ESP at `/boot`, initrd paths are `amd-ucode.img` and `initramfs-linux.img` (no `/boot/` prefix).
+- No `nvme_core.default_ps_max_latency_us=0` unless latency issues observed.
+
 #### 11g. Enable systemd units
 
 | Unit | Reason |
 |------|--------|
 | `NetworkManager.service` | Network on boot |
-| `gdm.service` | GNOME display manager (autologin → Wayland session) |
+| `gdm.service` | GNOME display manager (Wayland session after login) |
 | `sshd.service` | Remote SSH (Tailscale post-install) |
 | `systemd-timesyncd.service` | Time sync |
 | `fstrim.timer` | NVMe weekly TRIM |
@@ -489,7 +459,7 @@ set_passwd "${USERNAME}" "User ${USERNAME}"
 
 1. `trap - EXIT` (successful path — or let reboot handle umount).
 2. `umount -R /mnt`
-3. Print success message: remove USB, reboot — desktop should autologin (no GDM password prompt).
+3. Print success message: remove USB, reboot — rEFInd menu, then GDM login.
 4. Point user to **`post_install.md`** next steps (paru, Tailscale, Steam).
 5. Optional: `read -p "Reboot now? [y/N]"` — default **N** so user can review; dxp480t auto-reboots — **recommend prompt** for desktop install.
 
@@ -551,10 +521,9 @@ Run on live ISO (can use `-n` dry-run sections or QEMU later):
 - [ ] Partition layout: `sgdisk -p $disk` shows 1G / 200G / rest
 - [ ] `lsblk -f` shows vfat + ext4 + ext4
 - [ ] `genfstab -U /mnt` contains `/`, `/boot`, `/home`
-- [ ] `arch-chroot /mnt bootctl status` shows loader installed
-- [ ] `/boot/loader/entries/arch.conf` has amd-ucode + initramfs order
-- [ ] After reboot: autologin to GNOME, Wayland session (`echo $XDG_SESSION_TYPE`), `glxinfo` or `vulkaninfo` works
-- [ ] `/etc/gdm/custom.conf` has `AutomaticLogin=${USERNAME}`
+- [ ] `efibootmgr` lists rEFInd boot entry after install
+- [ ] `/boot/refind_linux.conf` has amd-ucode before initramfs-linux.img
+- [ ] After reboot: rEFInd menu → GDM login → GNOME Wayland (`echo $XDG_SESSION_TYPE`), `vulkaninfo` works
 - [ ] NetworkManager connects; SSH reachable on LAN
 
 ---
@@ -565,7 +534,7 @@ Run on live ISO (can use `-n` dry-run sections or QEMU later):
 - [Arch Partitioning](https://wiki.archlinux.org/title/Partitioning) — separate `/home`
 - [AMDGPU](https://wiki.archlinux.org/title/Amdgpu) — Mesa + Vulkan
 - [GNOME](https://wiki.archlinux.org/title/Gnome) — GDM, Wayland
-- [systemd-boot](https://wiki.archlinux.org/title/Systemd-boot)
+- [rEFInd](https://wiki.archlinux.org/title/Refind)
 - [Microcode](https://wiki.archlinux.org/title/Microcode) — amd-ucode in boot entry
 - [Multilib](https://wiki.archlinux.org/title/Official_repositories#multilib)
 - [reflector](https://wiki.archlinux.org/title/Mirrors#Automatically_ranking_mirrors)

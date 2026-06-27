@@ -51,7 +51,7 @@ bash install.sh
 | Password | root, then your user |
 | Confirmation | type `ERASE` to destroy the selected disk |
 
-When it finishes, remove the install medium and reboot. GDM autologs into GNOME Wayland. Then continue with **Post-install** below (on the installed system, mostly as your normal user).
+When it finishes, remove the install medium and reboot. Log in at GDM (GNOME Wayland). Then continue with **Post-install** below (on the installed system, mostly as your normal user).
 
 ---
 
@@ -77,8 +77,8 @@ lspci -k | grep -A3 'VGA\|Display'
 # Separate /home mounted
 findmnt /home
 
-# GDM autologin configured
-grep -E '^AutomaticLogin' /etc/gdm/custom.conf
+# rEFInd boot config present
+test -f /boot/refind_linux.conf && test -f /boot/EFI/refind/refind.conf
 
 # Fonts and audio mixer (installed by install.sh)
 pacman -Q ttf-liberation noto-fonts pavucontrol rtkit
@@ -223,7 +223,7 @@ Summary of what `install.sh` already applied vs optional tweaks below.
 |------|------|-----|
 | **NVMe TRIM** | `fstrim.timer` enabled (weekly) | Preferred over continuous `discard` on ext4 — trims free blocks without write-amp under load |
 | **NVMe mounts** | `noatime` on ext4 `/` and `/home` | Fewer metadata writes on SSD |
-| **CPU microcode** | `amd-ucode` in systemd-boot entry | Security + stability fixes for 9800X3D |
+| **CPU microcode** | `amd-ucode` in rEFInd `refind_linux.conf` | Security + stability fixes for 9800X3D |
 | **RAM (maps)** | `vm.max_map_count=1048576` | Required by Steam/Proton and some AAA titles |
 | **GameMode** | Package + `/etc/gamemode.ini` + `gamemode` group | Raises CPU governor and GPU power level while games run |
 | **Audio RT** | `rtkit` + `rtkit-daemon` | PipeWire low-latency scheduling (see [section 1](#1-enable-realtimekit-pipewire-low-latency)) |
@@ -259,16 +259,16 @@ sudo fwupdmgr get-updates
 **Optional kernel param** — lowers NVMe idle power-state exit latency; slightly higher idle power. Only add if you notice storage latency spikes:
 
 ```bash
-sudo nano /boot/loader/entries/arch.conf
+sudo nano /boot/refind_linux.conf
 ```
 
-Append to the `options` line:
+Append to the quoted options on the **Boot Arch Linux** line (before the closing `"`):
 
 ```text
-nvme_core.default_ps_max_latency_us=0
+ nvme_core.default_ps_max_latency_us=0
 ```
 
-Then `sudo bootctl update` if needed and reboot.
+Then reboot.
 
 **Optional udev rule** — force `none` scheduler on NVMe (usually already default on recent kernels):
 
@@ -497,6 +497,152 @@ sudo pacman -Syu
 
 ---
 
+---
+
+## 12. Fan control (CoolerControl)
+
+**Prerequisite:** [`bios_optimize.md` Phase 2](bios_optimize.md#phase-2--fan-control-bios-handoff) — flat Manual BIOS curves on `CPU_FAN`, `SYS_FAN1`, `SYS_FAN2`.
+
+Gigabyte firmware locks fan curves (CPU_FAN @ 70 °C, SYS_FAN1 @ 60 °C). BIOS holds a flat **~40 % PWM** at boot; **CoolerControl** applies real curves in Linux (including **GPU + CPU mix** for bottom intakes).
+
+### 12.1 Install packages
+
+Requires **paru** (§ 2).
+
+```bash
+sudo pacman -S --needed lm_sensors
+paru -S it87-dkms-git coolercontrol
+```
+
+### 12.2 Load `it87` module
+
+```bash
+echo 'options it87 ignore_resource_conflict=1' | sudo tee /etc/modprobe.d/it87.conf
+echo it87 | sudo tee /etc/modules-load.d/it87.conf
+sudo modprobe it87
+sudo sensors
+```
+
+Look for an **`it86xx`** (or similar) entry with **`fan1`–`fan3`** and **`pwm1`–`pwm3`**. If `modprobe` fails, see [it87 issues](https://github.com/frankcrawford/it87/issues) and [Arch lm_sensors — Gigabyte](https://wiki.archlinux.org/title/Lm_sensors#Gigabyte_motherboards).
+
+Reboot (full **shutdown** preferred on Gigabyte if PWM ever sticks):
+
+```bash
+sudo reboot
+```
+
+### 12.3 Map fan headers
+
+List motherboard PWM channels:
+
+```bash
+for d in /sys/class/hwmon/hwmon*; do
+  [[ -f "$d/name" ]] || continue
+  echo "=== $(basename "$d") name=$(cat "$d/name") ==="
+  ls "$d"/fan*_input 2>/dev/null
+  ls "$d"/pwm* 2>/dev/null
+done
+```
+
+**Match `pwmN` to physical headers:** power off, unplug one fan at a time, boot to BIOS Smart Fan 6 and note which RPM drops — or watch RPM in `sensors` after boot.
+
+| Header | Physical fan | Notes |
+|--------|--------------|-------|
+| CPU_FAN | AXP90-X47 | |
+| SYS_FAN1 | Noctua A12x15 | fill from your build |
+| SYS_FAN2 | Phanteks T30 | fill from your build |
+
+**Temperature sensors for curves:**
+
+| Sensor | `sensors` name | Use |
+|--------|----------------|-----|
+| CPU | `k10temp` | CPU fan curve |
+| GPU | `amdgpu` edge / junction | Case intake mix |
+
+### 12.4 Enable CoolerControl
+
+```bash
+sudo systemctl enable --now coolercontrol
+```
+
+Open **CoolerControl** from the app menu.
+
+1. Under the **`it87`** / **`it86xx`** device, confirm three **`pwm`** channels.
+2. Rename and link each channel to the correct **`fanN`** RPM sensor.
+
+### 12.5 Fan curves
+
+**CPU fan (`CPU_FAN`)** — sensor: **`k10temp`**
+
+| Temp °C | PWM % |
+|---------|-------|
+| 35 | 25 |
+| 50 | 38 |
+| 65 | 55 |
+| 75 | 75 |
+| 85 | 90 |
+| 90 | 100 |
+
+**Bottom intakes** — sensor: **Mix (maximum)** of **`k10temp`** + **`amdgpu`** GPU edge or junction. The blower 7900 XT dumps heat into the case while CPU can still be under 60 °C; BIOS cannot see GPU temp.
+
+**Noctua (SYS_FAN1):**
+
+| Temp °C | PWM % |
+|---------|-------|
+| 35 | 20 |
+| 50 | 35 |
+| 65 | 50 |
+| 75 | 70 |
+| 85 | 90 |
+| 90 | 100 |
+
+**Phanteks T30 (SYS_FAN2)** — same mix sensor, lower PWM (more airflow per RPM):
+
+| Temp °C | PWM % |
+|---------|-------|
+| 35 | 18 |
+| 50 | 30 |
+| 65 | 45 |
+| 75 | 62 |
+| 85 | 80 |
+| 90 | 92 |
+
+**Advanced (each channel):** hysteresis **2–3 °C**; step up **2–3 s**; step down **5–8 s**. Export/back up the CoolerControl profile when done.
+
+### 12.6 Validate
+
+```bash
+watch -n 2 sensors
+```
+
+Stress test — RPM should change within seconds:
+
+```bash
+stress-ng --cpu 8 --timeout 60s
+```
+
+Gaming (30 min): CPU ≤ 90 °C, GPU junction ≤ 95 °C. Adjust 75–85 °C PWM points if too loud or too hot.
+
+Confirm Linux owns PWM (replace `hwmonN` / `pwmM` with your paths):
+
+```bash
+echo 128 | sudo tee /sys/class/hwmon/hwmonN/pwmM
+sensors | grep -i fan
+```
+
+### 12.7 Fan control troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| No `it87` / no `pwm*` | `dmesg \| grep it87`; check `/etc/modprobe.d/it87.conf` |
+| Fans at ~40 % until login | Expected until `coolercontrol` starts — check `systemctl status coolercontrol` |
+| Fans ignore CoolerControl | Recheck BIOS flat curve + **Apply**; full shutdown (not warm reboot) |
+| Wrong fan responds | Fix channel mapping in CoolerControl |
+| Too loud gaming | Lower 75–85 °C PWM; [`bios_optimize.md` Phase 3](bios_optimize.md#phase-3--cpu-undervolt-9800x3d) CO undervolt |
+| Too hot | Raise 65–75 °C points +5–10 %; clean bottom dust filter |
+
+---
+
 ## Verification checklist
 
 | Check | Command / action |
@@ -560,6 +706,12 @@ export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.i686.json:/usr/share/v
 sudo systemctl status tailscaled
 sudo journalctl -u tailscaled -b --no-pager | tail -30
 ```
+
+---
+
+## Next: BIOS & performance tuning
+
+After post-install is stable, follow **[`bios_optimize.md`](bios_optimize.md)** for XMP, CPU/GPU tuning, and **Phase 2 BIOS fan handoff**. Linux fan curves: **§ 12** above. Strategy: [`bios_optimize_plan.md`](bios_optimize_plan.md).
 
 ---
 
