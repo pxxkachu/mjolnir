@@ -2,7 +2,9 @@
 
 Mini-ITX gaming and homelab workstation in a custom **OpenITX** case. **Arch Linux only** on a **Samsung 990 PRO 2 TB** PCIe Gen4 NVMe M.2 SSD.
 
-**Hostname:** `mjolnir` · **Case:** OpenITX · **Use:** local GPU AI server, Steam gaming, light development, homelab control
+**Hostname:** `mjolnir` · **User:** `laika` · **Case:** OpenITX · **Use:** local GPU AI server, Steam gaming, light development, homelab control
+
+**Repo:** [github.com/pxxkachu/mjolnir](https://github.com/pxxkachu/mjolnir)
 
 ---
 
@@ -41,7 +43,7 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 
 ```
 1. BIOS            →  bios_optimize.md
-2. Arch live ISO   →  scripts/mjolnir-install.sh --disk … --user … --confirm-wipe
+2. Arch live ISO   →  scripts/mjolnir-install.sh --disk /dev/nvme0n1 --user laika --confirm-wipe
 3. Reboot          →  GDM → GNOME → tailscale up
 ```
 
@@ -51,7 +53,7 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 | **2. Full install** | [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) | Wipe → pacstrap → bootloader → stack + **paru-bin** (optional `--it87`) |
 | **3. Verify** | [`arch_install.md`](arch_install.md) | `nvidia-smi`, Tailscale API, CoolerControl, Proton |
 
-**How to run** (ISO steps, dry-run, post-install only): [`arch_install.md` — How to run the scripts](arch_install.md#how-to-run-the-scripts)
+**How to run** (step-by-step commands, reboot, chroot notes): [`arch_install.md` — Step-by-step install](arch_install.md#step-by-step-install-follow-in-order)
 
 ---
 
@@ -77,7 +79,7 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 
 **Fans:** No case fans. **CoolerControl** on **CPU_FAN** (+ GPU); BIOS unlock for CPU header only
 
-**AI ops:** Ollama bound to **Tailscale IP** (or nftables) · sleep targets **masked** · chrony + reflector.timer + fstrim.timer
+**AI ops:** Ollama bound to **Tailscale IP** (or nftables) · sleep targets **masked** · chrony + fstrim.timer · **America/Chicago** · US mirrors via reflector (rate-sorted, permanent)
 
 ---
 
@@ -95,6 +97,7 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 
 ```yaml
 machine: mjolnir
+user: laika
 case: OpenITX
 os: Arch Linux
 desktop: GNOME minimal
@@ -103,6 +106,7 @@ gpu: RTX 5090 (HP OMEN OEM)
 ram: 96GB @ 6000 CL30-36-36-30
 storage: Samsung 990 PRO 2TB PCIe Gen4 NVMe M.2 (/dev/nvme0n1)
 aur_helper: paru-bin
+repo: https://github.com/pxxkachu/mjolnir
 workloads:
   - local_ai_server_ollama
   - steam_gaming

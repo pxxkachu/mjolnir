@@ -12,6 +12,8 @@ Use this file as the hardware and software source of truth when writing guides o
 |-------|-------|
 | Codename | **mjolnir** |
 | Hostname | **mjolnir** |
+| Login user | **laika** |
+| Repo | [github.com/pxxkachu/mjolnir](https://github.com/pxxkachu/mjolnir) |
 | Case | **OpenITX** (custom Mini-ITX) |
 | Boot mode | UEFI + GPT · **Arch only** |
 | Form factor | Desktop (Mini-ITX, SFF) |
@@ -177,6 +179,9 @@ Use this file as the hardware and software source of truth when writing guides o
 machine:
   codename: mjolnir
   hostname: mjolnir
+  user: laika
+  timezone: America/Chicago
+  repo: https://github.com/pxxkachu/mjolnir
   form_factor: mini-itx
   case: OpenITX custom
   boot: uefi
@@ -264,6 +269,10 @@ virtualization: false
 | Decision | Choice |
 |----------|--------|
 | Hostname | `mjolnir` |
+| Login user | `laika` |
+| Timezone | `America/Chicago` |
+| Pacman mirrors | `reflector` — US HTTPS, sorted by rate (permanent conf + timer) |
+| Repo | https://github.com/pxxkachu/mjolnir |
 | OS | **Arch Linux only** (wipe Windows) |
 | Desktop | **GNOME** minimal (Wayland) + **GDM** |
 | AI stack | **Ollama** + CUDA, Tailscale clients |

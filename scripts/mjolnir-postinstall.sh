@@ -127,7 +127,9 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "DRY-RUN: write /etc/modprobe.d/nvidia.conf (modeset=1)"
   run systemctl enable nvidia-persistenced.service
   echo "DRY-RUN: write logind no-sleep drop-in + mask sleep targets"
-  run systemctl enable reflector.timer fstrim.timer chronyd.service coolercontrold.service gdm.service
+  echo "DRY-RUN: write /etc/xdg/reflector/reflector.conf (US HTTPS, sort rate)"
+  echo "DRY-RUN: reflector --country US --sort rate → /etc/pacman.d/mirrorlist"
+  run systemctl enable reflector.timer reflector.service fstrim.timer chronyd.service coolercontrold.service gdm.service
   run systemctl enable nftables.service tailscaled.service ollama.service
   echo "DRY-RUN: enable GDM → GNOME Wayland session"
   echo "DRY-RUN: write ollama.service.d/override.conf (127.0.0.1 or Tailscale IP)"
@@ -195,15 +197,29 @@ if [[ "$IN_CHROOT" != "1" ]]; then
   systemctl restart systemd-logind.service || true
 fi
 
-echo "==> reflector.timer + fstrim.timer + chronyd"
+echo "==> Fastest US mirrors (permanent reflector.conf) + fstrim.timer + chronyd"
 install -d /etc/xdg/reflector
+# Used by reflector.service / reflector.timer — re-ranks by download rate
 cat >/etc/xdg/reflector/reflector.conf <<'EOF'
 --save /etc/pacman.d/mirrorlist
+--country US
 --protocol https
+--age 12
 --latest 20
 --sort rate
 EOF
-systemctl enable reflector.timer fstrim.timer chronyd.service
+# Rank now (also runs on boot via reflector.service; weekly via timer)
+if [[ "$IN_CHROOT" != "1" ]]; then
+  reflector \
+    --verbose \
+    --country US \
+    --protocol https \
+    --age 12 \
+    --latest 20 \
+    --sort rate \
+    --save /etc/pacman.d/mirrorlist || true
+fi
+systemctl enable reflector.timer reflector.service fstrim.timer chronyd.service
 if [[ "$IN_CHROOT" != "1" ]]; then
   systemctl start reflector.timer fstrim.timer chronyd.service || true
 fi

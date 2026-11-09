@@ -7,10 +7,10 @@
 # Example:
 #   # Boot Arch ISO, connect network, then:
 #   pacman -Sy --noconfirm git
-#   git clone <this-repo> /root/mjolnir && cd /root/mjolnir
+#   git clone https://github.com/pxxkachu/mjolnir.git /root/mjolnir && cd /root/mjolnir
 #   ./scripts/mjolnir-install.sh \
 #       --disk /dev/nvme0n1 \
-#       --user jhle \
+#       --user laika \
 #       --confirm-wipe
 #
 # Options:
@@ -129,16 +129,36 @@ echo "    Disk:     $DISK"
 echo "    Parts:    $P_EFI (EFI) · $P_ROOT (root) · $P_HOME (home)"
 echo "    User:     $USERNAME"
 echo "    Hostname: $HOSTNAME"
+echo "    Timezone: $TIMEZONE"
 echo "    FS:       $FS (EFI ${EFI_SIZE}, root ${ROOT_SIZE_GIB}GiB, home = rest)"
+echo "    Mirrors:  reflector --country US --sort rate (saved permanently)"
 echo "    Post:     $([[ "$SKIP_POST" -eq 1 ]] && echo skip || echo mjolnir-postinstall.sh)$([[ "$IT87" -eq 1 ]] && echo ' + it87')"
 echo "    THIS WILL DESTROY ALL DATA ON $DISK"
 [[ "$DRY_RUN" -eq 0 ]] && sleep 2
+
+# Rank HTTPS US mirrors by download rate; same flags as permanent reflector.conf
+rank_mirrors() {
+  local dest="${1:-/etc/pacman.d/mirrorlist}"
+  if ! command -v reflector >/dev/null; then
+    pacman -Sy --noconfirm --needed reflector || return 0
+  fi
+  reflector \
+    --verbose \
+    --country US \
+    --protocol https \
+    --age 12 \
+    --latest 20 \
+    --sort rate \
+    --save "$dest"
+}
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo
   echo "==> Planned steps"
   run timedatectl set-ntp true
-  run pacman -Sy --noconfirm --needed archlinux-keyring
+  run pacman -Sy --noconfirm --needed archlinux-keyring reflector
+  echo "DRY-RUN: reflector --country US --protocol https --age 12 --latest 20 --sort rate --save /etc/pacman.d/mirrorlist"
+  echo "DRY-RUN: timezone ${TIMEZONE} → /etc/localtime (permanent)"
   run sgdisk --zap-all "$DISK"
   run sgdisk -n "1:0:+${EFI_SIZE}" -t 1:ef00 -c 1:EFI "$DISK"
   run sgdisk -n "2:0:+${ROOT_SIZE_GIB}GiB" -t 2:8300 -c 2:root "$DISK"
@@ -160,8 +180,9 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   [[ "$FS" == "btrfs" ]] && BASE_PKGS+=(btrfs-progs)
   [[ "$IT87" -eq 1 ]] && BASE_PKGS+=(linux-headers dkms base-devel)
   run pacstrap -K /mnt "${BASE_PKGS[@]}"
+  echo "DRY-RUN: install ranked mirrorlist → /mnt/etc/pacman.d/mirrorlist"
   run genfstab -U /mnt
-  echo "DRY-RUN: arch-chroot configure locale/user/sudo/bootctl"
+  echo "DRY-RUN: arch-chroot configure locale/user/sudo/bootctl + timezone ${TIMEZONE}"
   echo "DRY-RUN: write /boot/loader/entries/arch.conf (root UUID + nvidia_drm.modeset=1)"
   echo "DRY-RUN: copy $REPO_ROOT → /mnt/opt/mjolnir"
   if [[ "$SKIP_POST" -eq 0 ]]; then
@@ -180,12 +201,11 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 # --- live environment ---
-echo "==> Network / clock / mirrors"
+echo "==> Network / clock / fastest US mirrors"
 timedatectl set-ntp true || true
-pacman -Sy --noconfirm --needed archlinux-keyring || true
-if command -v reflector >/dev/null; then
-  reflector --protocol https --latest 20 --sort rate --save /etc/pacman.d/mirrorlist || true
-fi
+pacman -Sy --noconfirm --needed archlinux-keyring reflector || true
+rank_mirrors /etc/pacman.d/mirrorlist || true
+echo "    Timezone will be permanently set to ${TIMEZONE}"
 
 # --- wipe + partition ---
 echo "==> Wiping and partitioning $DISK"
@@ -239,11 +259,19 @@ BASE_PKGS=(
 
 pacstrap -K /mnt "${BASE_PKGS[@]}"
 
+echo "==> Installing ranked mirrorlist into new system"
+install -d /mnt/etc/pacman.d
+if [[ -f /etc/pacman.d/mirrorlist ]]; then
+  cp -a /etc/pacman.d/mirrorlist /mnt/etc/pacman.d/mirrorlist
+else
+  rank_mirrors /mnt/etc/pacman.d/mirrorlist || true
+fi
+
 echo "==> fstab"
 genfstab -U /mnt >> /mnt/etc/fstab
 
 # --- chroot configure ---
-echo "==> Configuring system (locale, user, bootloader)"
+echo "==> Configuring system (locale, timezone=${TIMEZONE}, user, bootloader)"
 ROOT_UUID="$(blkid -s UUID -o value "$P_ROOT")"
 
 # Copy installer scripts into the new system for postinstall + future use
@@ -253,8 +281,11 @@ chmod +x /mnt/opt/mjolnir/scripts/*.sh
 
 arch-chroot /mnt /bin/bash -euo pipefail <<CHROOT
 set -euo pipefail
+# Permanent timezone (America/Chicago by default)
 ln -sf /usr/share/zoneinfo/${TIMEZONE} /etc/localtime
 hwclock --systohc
+echo '${TIMEZONE}' >/etc/timezone
+
 
 sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
 locale-gen
