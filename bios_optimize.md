@@ -1,531 +1,207 @@
-# Mjolnir — BIOS & Performance Tuning Guide
+# OpenITX — BIOS tuning
 
-Step-by-step instructions to tune **BIOS settings**, **fan curves**, **CPU undervolt**, **RAM (XMP)**, and **GPU undervolt** on the Mjolnir SFF build.
+**Entry point:** [`README.md`](README.md)
 
-**Read first:** strategy and research — [`bios_optimize_plan.md`](bios_optimize_plan.md)  
-**Hardware reference:** [`parts.md`](parts.md)  
-**Prerequisite:** Arch installed via [`post_install.md`](post_install.md) (at least through gaming stack + monitoring tools)
+**Board:** Gigabyte **B850I AORUS PRO** · **CPU:** Ryzen 7 **9800X3D** · **RAM:** G.Skill 2×48 GB @ **6000 CL30** *(stable; kit XMP 6800)* · **Storage:** Samsung **990 PRO** 2 TB PCIe Gen4 NVMe M.2 · **OS:** **Arch Linux** only
 
----
-
-## Overview
-
-| Phase | What | Where |
-|-------|------|--------|
-| 0 | Foundation BIOS | Gigabyte B850I BIOS |
-| 1 | RAM — XMP @ 6800 | BIOS |
-| 2 | Fan control | BIOS flat handoff — Phase 2 here; Linux — [`post_install.md` § 12](post_install.md#12-fan-control-coolercontrol) |
-| 3 | CPU undervolt (PBO + Curve Optimizer) | BIOS |
-| 4 | RAM tighten *(optional)* | BIOS |
-| 5 | GPU undervolt + blower fan | Arch — LACT |
-| 6 | Validation & lock-in | BIOS + Linux |
-
-**Order is mandatory.** Do not tune Curve Optimizer until XMP and fan curves are stable.
+Apply after **Load Optimized Defaults** + latest stable BIOS flash. DIMMs in **A2 + B2** only. OS side: **`nvidia-open`**, GNOME, Ollama — see [`arch_install.md`](arch_install.md).
 
 ---
 
-## Before you begin
+## Boot
 
-### Tools & access
-
-| Item | Detail |
-|------|--------|
-| BIOS key | **Del** at POST |
-| Save & exit | **F10** |
-| Smart Fan 6 | **F2** or **Tuner** tab |
-| Clear CMOS | Rear I/O button or jumper — use when POST fails |
-| BIOS manual | [Gigabyte AMD 800 Series](https://download.gigabyte.com/FileList/Manual/mb_manual_amd800-bios_e_20260512.pdf) |
-
-### Linux packages (installed system)
-
-```bash
-sudo pacman -S --needed stress-ng lm_sensors mangohud
-sudo sensors-detect   # accept defaults for AMD; optional
-paru -S lact          # Phase 5 — after paru is installed
-```
-
-### Record baseline (fill in before tuning)
-
-| Metric | Before tuning | After tuning |
-|--------|---------------|--------------|
-| Game (title: ________) FPS avg | | |
-| CPU peak gaming °C | | |
-| GPU junction peak gaming °C | | |
-| GPU power avg gaming W | | |
-| Subjective noise (1–10) | | |
-
-### Fan header map *(fill at build time)*
-
-| Fan | Connected to | Notes |
-|-----|--------------|-------|
-| Thermalright AXP90-X47 | **CPU_FAN** | 4-pin PWM |
-| Noctua NF-A12x15 (bottom intake) | **SYS_FAN___** | 4-pin PWM |
-| Phanteks T30 (bottom intake) | **SYS_FAN___** | 4-pin PWM |
-
-### Final settings log *(fill when done)*
-
-| Setting | Final value |
-|---------|-------------|
-| BIOS version | |
-| XMP profile | XMP I / Enabled |
-| Curve Optimizer (all-core) | −____ |
-| PPT / TDC / EDC limits | Auto / Manual: ____ |
-| GPU voltage offset (LACT) | −____ mV |
-| Date locked in | |
+| Setting | Set to | What it does | Why this value |
+|---------|--------|--------------|----------------|
+| **CSM Support** | **Disabled** | Compatibility Support Module emulates legacy BIOS boot (MBR, 16-bit option ROMs). | Pure **UEFI + GPT** for Arch + systemd-boot. No legacy OS. |
+| **Secure Boot** | **Disabled** for install → **Enabled** after **sbctl** | Only allows boot/load of OS and drivers signed with trusted keys. | Off during first Arch install; enroll keys with **sbctl** then turn on ([`arch_install.md`](arch_install.md)). Requires **CSM off**. |
+| **Trusted Platform Module** | **Enable ASP fTPM** | Exposes a TPM 2.0 device using the CPU’s built-in firmware TPM. | Useful for optional LUKS TPM unlock and measured boot later. No physical TPM module needed. |
+| **Boot Option Priorities** | **Linux Boot Manager / systemd-boot** on **990 PRO** | Order of devices tried at power-on. | Single-OS Arch. **F12** = USB for recovery/ISO. |
+| **Fast Boot** | **Enabled** | Skips full POST device enumeration where safe. | Faster everyday boot on a stable single-OS build. |
 
 ---
 
-## Phase 0 — Foundation BIOS
+## Storage (Samsung 990 PRO 2 TB PCIe Gen4 NVMe M.2)
 
-Do this on **first boot** (Windows not required — can use Arch live USB or installed Arch).
+*Single M.2 Internal SSD (PCIe Gen4) — typically `/dev/nvme0n1` — Arch Linux on full disk.*
 
-### 0.1 Update BIOS
+| Setting | Set to | What it does | Why this value |
+|---------|--------|--------------|----------------|
+| **NVMe RAID Mode** | **Disabled** | Treats NVMe drives as a RAID array. | Single OS drive — no RAID. |
+| **M.2 PCIe Mode** | **Auto** | Link speed for the M.2 slot. | **990 PRO** is Gen4; **Auto** trains correctly. Force **Gen4** only if the drive fails to enumerate after a BIOS update. |
 
-1. On another machine, download latest **non-beta** BIOS for **B850I AORUS PRO** from [Gigabyte support](https://www.gigabyte.com/Motherboard/B850I-AORUS-PRO/support).
-2. Copy to FAT32 USB.
-3. Boot → **Del** → **Q-Flash** (or **F8**) → update from file.
-4. Reboot; **Load Optimized Defaults** if prompted, then re-apply settings below.
-
-### 0.2 Essential settings
-
-Enter BIOS → use **Advanced** mode (not Easy Mode).
-
-| # | Setting | Value | Navigation (typical) |
-|---|---------|-------|----------------------|
-| 1 | **CSM Support** | **Disabled** | BIOS → Settings → Miscellaneous |
-| 2 | **Secure Boot** | **Disabled** *(Linux)* or Enabled per preference | BIOS → Settings → Trusted Computing |
-| 3 | **Above 4G Decoding** | **Enabled** | Settings → IO Ports |
-| 4 | **Re-Size BAR Support** | **Enabled** | Settings → IO Ports |
-| 5 | **IOMMU / SVM Mode** | **Disabled** | Settings → IO Ports *(no VMs on this build)* |
-| 6 | **ERP** | **Disabled** | Settings → Platform Power |
-| 7 | **Boot Mode** | **UEFI** only | Verify in Boot menu |
-
-Press **F10** → Save & reset.
-
-**Do not change yet:** CPU ratio, manual voltage, memory timings beyond XMP (Phase 1).
+**Leave at default:** hot-plug, ASPM on NVMe.
 
 ---
 
-## Phase 1 — RAM (XMP @ 6800)
+## GPU (RTX 5090 — HP OMEN OEM)
 
-**Kit:** G.Skill Ripjaws S5 `F5-6800J3446F48GX2-RS5K` — 2×48 GB, 6800 MT/s, CL34-46-46-108, **Intel XMP 3.0**, 33 mm height.
-
-### 1.1 Physical install check
-
-- DIMMs in **2 slots only** — use **A2 + B2** (2nd and 4th slots from CPU) per motherboard manual for dual-channel.
-- Both modules fully seated until clips click.
-- **33 mm** Ripjaws S5 clears the AXP90-X47 without issue.
-
-### 1.2 Enable XMP
-
-1. **Del** → **M.I.T.** tab.
-2. **Advanced Memory Settings**.
-3. **XMP** → **XMP I** → **Enabled** *(profile showing **6800 MT/s**)*.
-4. Confirm on screen:
-   - **6800 MT/s**
-   - **CL34-46-46-108**
-   - **1.35 V** DRAM
-5. Set **FCLK** to **3400 MHz** if exposed *(UCLK 1:1 at 6800)*.
-6. **Memory Context Restore** → **Disabled** *(during tuning; enable in Phase 6)*.
-7. **F10** → Save.
-
-If the board fails to POST (loops, no display):
-
-1. Power off → **Clear CMOS**.
-2. Boot with one stick in **A2** only → BIOS → disable XMP → shut down → install second stick → enable XMP again.
-3. Update BIOS if still failing (common fix for 2×48 GB kits).
-4. If XMP 6800 will not train: try **6400** or **6000** manual speed before aggressive SOC tweaks.
-
-### 1.3 Verify in Linux
-
-```bash
-sudo dmidecode -t memory | grep -E 'Speed|Size|Locator|Configured'
-```
-
-Expected: **6800 MT/s** configured *(or highest stable speed you locked in)*, **48 GB** per module.
-
-```bash
-# Check for memory errors after boot
-dmesg | grep -iE 'mce|hardware error|edac'
-```
-
-### 1.4 Stability tests
-
-Run after **every** RAM or BIOS change in later phases too.
-
-**Quick (required):**
-
-```bash
-# 30+ minutes of normal use + one gaming session
-```
-
-**Memory stress (recommended after XMP enable):**
-
-```bash
-# Leave ~8–12 GB for OS — adjust bytes if needed
-stress-ng --vm 2 --vm-bytes 42G --vm-method all --timeout 1h
-```
-
-**Pass criteria:**
-
-- No reboot or freeze
-- `dmesg | grep -i mce` shows nothing new
-- Games do not stutter abnormally
-
-### 1.5 XMP troubleshooting
-
-If unstable, try in order — **one change at a time**, retest:
-
-| Step | Action |
-|------|--------|
-| 1 | Update BIOS |
-| 2 | Reseat RAM |
-| 3 | Clear CMOS → XMP only |
-| 4 | Manual: **6800**, timings **34-46-46-108**, **1.35 V**, **FCLK 3400** (1:1 UCLK) |
-| 5 | Step down: **6400** / **6000** if 6800 will not train |
-| 6 | VSOC: leave **Auto** first; if needed small increase — **never exceed 1.30 V** long-term |
-
-**Do not** assume 6800 will POST first try on 2×48 GB AM5 — have a fallback speed in mind.
+| Setting | Set to | What it does | Why this value |
+|---------|--------|--------------|----------------|
+| **Initial Display Output** | **PCIe 1 Slot** | Chooses which GPU drives the display during POST and early boot. | Ensures the **RTX 5090** (not unused iGPU) owns the monitor from first frame — fewer black-screen POST issues. |
+| **Above 4G Decoding** | **Enabled** | Lets 64-bit PCIe devices use memory addresses above 4 GB. | Without this, a **32 GB** GPU cannot map all VRAM properly in UEFI; **required** before ReBAR works. |
+| **Re-Size BAR Support** | **Enabled** | Lets the CPU access the full GPU VRAM window (Resizable BAR). | Small **gaming FPS uplift** on Blackwell; pairs with Above 4G. Safe default for this GPU + Arch. |
+| **PCIEX16 Slot Link Speed** | **Gen5** *(or **Auto**)* | Caps the primary x16 slot to PCIe 3/4/5. | **RTX 5090** is Gen5. Use **Gen5** on B850I; fall back to **Auto** / **Gen4** only if link training fails. |
+| **PCIe ASPM Mode** | **Disabled** | Active State Power Management — PCIe link power-down at idle. | Avoids link wake latency that can cause micro-stutter in some games. |
 
 ---
 
-## Phase 2 — Fan control (BIOS handoff)
+## CPU — 9800X3D
 
-Gigabyte Smart Fan 6 **cannot** tune gaming curves in BIOS on this board — **CPU_FAN** locks at **70 °C**, **SYS_FAN1** at **60 °C**. Use a **flat Manual curve** in BIOS so firmware releases PWM to Linux, then follow **[`post_install.md` § 12](post_install.md#12-fan-control-coolercontrol)** for CoolerControl.
+*Tweaker → Advanced CPU Settings · Tweaker → **AMD Overclocking** (PBO / Curve Optimizer)*
 
-**Order:** BIOS steps below → post-install § 12 → Phase 3 Curve Optimizer.
+| Setting | Set to | What it does | Why this value |
+|---------|--------|--------------|----------------|
+| **Precision Boost Overdrive** | **Advanced** | Main PBO switch — unlocks limits, Curve Optimizer, and boost tuning. | **Advanced** exposes undervolt controls without enabling Gigabyte’s **PBO Enhancement** presets. |
+| **PBO Limits** | **Motherboard** | Who sets PPT/TDC/EDC caps — AMD spec vs board maximum. | **Motherboard** lets the CPU boost freely within VRM/cooler limits; cap manually only if thermals require it. |
+| **Boost Override** | **+0 MHz** | Adds MHz on top of stock boost ceiling. | **9800X3D** is cache-limited — manual frequency OC rarely helps games and adds heat; **+0** keeps stock boost tables. |
+| **Scalar** | **1X** | Aggression multiplier for Curve Optimizer stability testing. | **1X** gives honest validation at **−35** CO; **10×** can pass short tests then crash in games. |
+| **Curve Optimizer** | **Negative**, **All Cores**, **−35** | Per-core voltage offset along the boost curve — **negative** = undervolt. | Validated stable on this **9800X3D** — same FPS band, **less heat and power** in SFF. Critical for AXP90 in the OpenITX case. |
+| **Global C-state Control** | **Enabled** | Allows cores to enter low-power **C-states** when idle (drop clock/voltage). | Keeps idle cool and quiet in SFF. On X3D, **Auto** sometimes behaves like **Disabled** and causes **core parking / game stutter** — set **Enabled** explicitly. If stutter worsens, try **Disabled**. |
+| **SVM Enable** | **Disabled** | AMD-V virtualization — lets hypervisors (Hyper-V, VMware) run VMs. | This build runs **no local VMs**; disabling trims overhead and avoids some anti-cheat/VBS edge cases. Re-enable if a title or tool requires it. |
+| **X3D Turbo Mode 2** | **Disabled** | Gigabyte heuristic that shifts load based on “X3D Turbo” profiles. | Unpredictable on **9800X3D** (single CCD); can hurt more than help vs stock boost. |
+| **PBO Enhancement** | **Disabled** | *Separate from main PBO above* — extra boost tiers tied to **90 / 80 / 70 °C** targets. | Gigabyte-specific add-on; pushes clocks when cool. Bad fit for **SFF** thermals. |
+| **ECO Mode** | **Disabled** | Caps CPU power to a lower TDP envelope. | Saves power/heat but **cuts gaming boost**; 9800X3D already benefits from undervolt (Curve Optimizer), not a hard ECO cap. |
 
-### 2.1 Why BIOS-only curves fail
+**Leave at default**
 
-| Header | Firmware lock | Effect with CPU temp input |
-|--------|---------------|---------------------------|
-| **CPU_FAN** | 100 % @ **70 °C** (point 7) | Max speed for most gaming (70–85 °C) |
-| **SYS_FAN1** | Points **6 + 7 @ 60 °C** | Max speed whenever CPU ≥ 60 °C |
-| **SYS_FAN2** | Check in Smart Fan 6 | May lock at 70 °C instead |
+| Setting | Default | What it does | Why leave it |
+|---------|---------|--------------|--------------|
+| **Core Performance Boost** | Enabled | AMD boost — raises clock above base under load. | Required for normal **9800X3D** performance; disabling forces all-core base clock only. |
+| **SMT Mode** | Enabled | Exposes 2 threads per core (16 threads total). | Best for gaming + desktop; disable only for rare latency experiments. |
 
-Locked points cannot move to 90 °C ([Gigabyte reports](https://linustechtips.com/topic/1586458-gigabyte-smart-fan-6-maxes-out-fan-curve-at-70-degrees-c/)). **Do not use TUNE ALL** or Silent/Normal presets.
+**AMD CBS / AMD Overclocking** *(if shown)*:
 
-### 2.2 Open Smart Fan 6
+| Setting | Set to | What it does | Why this value |
+|---------|--------|--------------|----------------|
+| **CPPC** | **Enabled** | Collaborative Processor Performance Control — OS sees per-core speed limits. | Linux scheduler uses this for **preferred-core** / boost behavior. |
+| **CPPC Preferred Cores** | **Enabled** | Marks fastest cores for the scheduler. | Helps single-thread games hit the best cores on X3D. |
+| **IOMMU** | **Disabled** | I/O Memory Management Unit — DMA remapping for VMs/pass-through. | Same as SVM off — not needed without VMs; can stay off unless you enable Hyper-V/VBS later. |
 
-1. **Del** at POST.
-2. Press **F2** *or* **Tuner** → **Smart Fan 6**.
+**Thermal cap** *(only if gaming still **> 90 °C** after CO + fans)*: PPT **120 W**, TDC **75 A**, EDC **140 A**.
 
-### 2.3 Flat Manual curve (every header)
-
-Configure **`CPU_FAN`**, **`SYS_FAN1`**, and **`SYS_FAN2`** the same way. **Do not use TUNE ALL.**
-
-| Setting | Value |
-|---------|-------|
-| Fan Speed Control | **Manual** |
-| Control Mode | **PWM** |
-| Temperature Input | **CPU** *(ignored once flat)* |
-| Fan Stop | **Disabled** on CPU fan |
-| Fan Fail Warning | **Enabled** |
-| Curve Mode | **Slope** |
-
-Set this curve on **each** header ([it87 BIOS handoff](https://github.com/frankcrawford/it87)):
-
-| Point | Temp °C | PWM % |
-|-------|---------|-------|
-| 1 | 0 | 40 |
-| 2 | 90 | 40 |
-| 3 | 90 | 40 |
-| 4 | 90 | 40 |
-| 5 | 90 | 40 |
-| 6 | 90 | 40 |
-| 7 | 90 | 100 |
-
-1. Click **Apply** after each header.
-2. Note which physical fan (Noctua vs Phanteks T30) is on SYS_FAN1 vs SYS_FAN2 — you need this for CoolerControl.
-3. **Save Fan Profile (F3)** → **F10** Save & exit.
-
-### 2.4 Continue in Linux
-
-Boot to Arch and complete **[post_install.md § 12 — Fan control](post_install.md#12-fan-control-coolercontrol)** (`it87-dkms-git`, CoolerControl, curves, validation). Do **Phase 3** only after fans are stable.
+**Do not:** positive CO, manual CPU voltage, 10× Scalar, manual CPU ratio.
 
 ---
 
-## Phase 3 — CPU undervolt (9800X3D)
+## Memory — 6000 MHz CL30 *(done — already applied)*
 
-**Goal:** Less heat and power with same gaming performance — **not** max benchmark scores.
+**Status: complete on this machine.** Do not re-tune unless a CMOS clear / BIOS update resets settings. Table below is the recovery reference only.
 
-### 3.1 Enable PBO
+*Kit:* G.Skill **Ripjaws S5** `F5-6800J3446F48GX2-RS5K` (2×48 GB dual-rank, Intel XMP 6800). **6800 XMP did not hold**; daily driver is **6000 CL30-36-36-30** manual.
 
-1. **Del** → **Tweaker** or **M.I.T.** → **Advanced AMD Overclocking** *(accept full mode warning if shown)*.
-2. **Precision Boost Overdrive** → **Advanced** *(or Enabled)*.
-3. **PBO Limits** → **Motherboard** *(start here)*.
-4. **Boost Override** → **+0 MHz** *(do not OC X3D)*.
-5. **Scalar** → **Auto** or **1X**.
-6. **F10** → Save → boot → verify stable before CO.
+*Path (if re-applying):* **Tweaker** → **Advanced Memory Settings** · **DRAM Timing Control** for sub-timings.
 
-### 3.2 Curve Optimizer — step by step
-
-1. Same menu: **Curve Optimizer** → **Negative**.
-2. Mode: **All Cores**.
-3. Start at **−10**.
-4. **F10** → Save → boot to Linux.
-
-**Test after each step (−10, −15, −20, …):**
-
-```bash
-# 1 h normal desktop + web browsing
-# 30 min gaming
-stress-ng --cpu 0 --timeout 30m
-dmesg | grep -i mce
-```
-
-| Result | Next action |
-|--------|-------------|
-| Stable, temps improved | Try **−5** more (e.g. −10 → −15) |
-| Crash, freeze, or WHEA error | Revert **5** steps (e.g. −20 crash → use −15) |
-| Stable but no temp gain | Stop — keep current value |
-
-**Typical stable range:** **−15 to −25** all-core (silicon lottery — do not copy forum extremes).
-
-### 3.3 Optional — SFF power cap
-
-Only if CPU still exceeds **90 °C** in games **after** fans + CO:
-
-**PBO** → **Limits** → **Manual**:
-
-| Setting | Start value | Notes |
-|---------|-------------|-------|
-| PPT Limit | **120 W** | Package power cap |
-| TDC Limit | **75 A** | Sustained current |
-| EDC Limit | **140 A** | Peak current |
-
-Retest gaming FPS. Raise caps if FPS drops more than ~2 %.
-
-### 3.4 Optional — per-core Curve Optimizer
-
-Skip unless all-core CO hits a wall and you want more tuning time.
-
-1. **Curve Optimizer** → **Per Core**.
-2. Test cores individually — give **weaker** cores **less negative** offset (e.g. −20 on strong, −10 on weak).
-3. Requires many test cycles — see [`bios_optimize_plan.md`](bios_optimize_plan.md).
-
-### 3.5 What not to change
-
-- Positive Curve Optimizer without testing
-- Manual core voltage overrides
-- Disabling Global C-States as a first fix
+| Setting | Set to | What it does | Why this value |
+|---------|--------|--------------|----------------|
+| **XMP/EXPO Profile** | **XMP I** then manual override | Loads kit baseline before manual 6000 profile. | Ripjaws kit is Intel XMP — use **XMP I**, then apply values below. |
+| **System Memory Multiplier** | **6000 MT/s** | RAM data rate. | Stable sweet spot for 2×48 GB dual-rank on AM5; 6800 XMP failed to hold. |
+| **FCLK** | **2000 MHz** | Infinity Fabric clock. | Async from UCLK 3000 — validated stable pairing with 6000 MT/s on AM5. |
+| **UCLK DIV1 MODE** | **UCLK = MEMCLK** | Memory controller clock matches RAM speed. | **1:1 at 6000** (3000 MHz UCLK) — best latency sweet spot for 2×48 GB on AM5. |
+| **tCL** | **30** | CAS latency. | Part of validated CL30 primary set. |
+| **tRCD (Read & Write)** | **36** | RAS to CAS delay. | Validated stable primary timing. |
+| **tRP** | **36** | Row precharge time. | Validated stable primary timing. |
+| **tRAS** | **30** | Row active time. | Validated stable on this build. |
+| **tRC** | **66** | Row cycle time. | **tRAS + tRP** (30 + 36). |
+| **tRFC1 / tRFC2** | **Auto** | Refresh cycle timings. | Stable at Auto on this profile. |
+| **DRAM VDD / VDDQ** | **1.35 V** | Module core / I/O voltage. | Stable voltage for 6000 CL30 on this kit. |
+| **SOC / CPU VDDIO** | **1.15 V** | Memory controller I/O voltage. | Conservative SOC — stable for 2×48 GB @ 6000; bump to **1.20 V** if training fails after a BIOS update. |
+| **CPU VDDQ SOC** | **1.15 V** | SOC DQ voltage. | Matches validated profile. |
+| **DDR5 Auto Booster** | **Disabled** | Dynamically switches between JEDEC and a higher “boost” speed. | Avoids mid-session frequency changes; one fixed speed. |
+| **EXPO AI BOOST** | **Disabled** | Gigabyte AI memory tuning via AORUS software. | Opaque vs known manual profile. |
+| **XMP/EXPO High Bandwidth Support** | **Enabled** | Wider memory mode when XMP/EXPO is active. | Extra throughput with manual profile active. |
+| **XMP/EXPO Low Latency Support** | **Enabled** | Tighter controller behavior with profile active. | Pairs with High Bandwidth for latency. |
+| **Gear Down Mode (GDM)** | **Disabled** | Half-rate command/address clocking. | Cleaner training on manual timings. |
+| **Memory Context Restore** | **Enabled** | Saves trained RAM context to skip full re-train on warm boot. | Faster POST on a proven-stable profile. |
+| **Power Down Enable (PDM)** | **Enabled** | Allows memory power-down between accesses. | Pairs with MCR for faster warm boot. |
 
 ---
 
-## Phase 4 — Optional RAM tightening
 
-**Skip unless XMP + CO + fans are 100 % stable for a week.**
+## Virtualization & extras
 
-Low priority on **9800X3D** — gaming gains are usually tiny.
-
-| Tweak | Steps |
-|-------|-------|
-| Try **CL32** instead of CL34 | M.I.T. → Advanced Memory Settings → primary timing **tCL** → 32 → stress test 1 h |
-| Revert | CL34 or disable manual → XMP only |
-
-**Not recommended for daily use:** 7200+ MT/s, aggressive SOC, copied 2×16 GB presets.
+| Setting | Set to | What it does | Why this value |
+|---------|--------|--------------|----------------|
+| **IOMMU** | **Disabled** | PCIe DMA remapping (Settings menu duplicate of AMD CBS). | No VMs or passthrough on this machine. |
+| **SR-IOV Support** | **Disabled** | Single Root I/O Virtualization — splits one PCIe device into many virtual functions. | Datacenter/VM feature; unused on a desktop gaming box. |
+| **Network Stack** | **Disabled** | UEFI PXE/HTTP network boot stack. | Not installing over the network; saves POST time and avoids accidental network boot. |
+| **Gigabyte Utilities Downloader Configuration** | **Disabled** | Auto-downloads Gigabyte Control Center from the internet at first boot. | You install utilities manually when wanted — avoids unwanted background install. |
+| **3DMark01 Enhancement** | **Disabled** | Legacy tweak for old **3DMark 2001** benchmark scores. | Irrelevant to modern games; can skew timing behavior for no benefit. |
 
 ---
 
-## Phase 5 — GPU undervolt & fan (Linux)
+## Power & QoL
 
-GPU tuning is **not** in Gigabyte BIOS. Requires **Arch** + **LACT**.
+| Setting | Set to | What it does | Why this value |
+|---------|--------|--------------|----------------|
+| **ErP** | **Disabled** | EuP/ErP — cuts standby power to near zero in S5 shutdown (USB off, no wake). | **Disabled** keeps **USB power + wake** (keyboard, mouse, WoL) working. |
+| **Wake on LAN** *(Platform Power / AC Back)* | **Enabled** if you remote-power the AI box | Boots / wakes from magic packet. | Optional — pair with Arch `wol` on the NIC; keep **ErP Disabled**. |
+| **Power Loading** | **Enabled** | Adds a dummy load so the PSU sees minimum current on +12V. | Some **SFX PSUs** shut off or trip at very low load. |
+| **Full Screen LOGO Show** | **Disabled** | Gigabyte splash screen during POST. | Slightly faster visual boot to systemd-boot / Arch. |
 
-### 5.1 Enable AMDGPU overdrive
+---
 
-Edit boot entry:
+## Smart Fan 6 — CPU_FAN unlock only (not the daily controller)
 
-```bash
-sudo nano /boot/loader/entries/arch.conf
-```
+*F2 → **CPU_FAN*** (OpenITX has **no case fans** — ignore / leave unused **SYS_FAN*** headers)
 
-Append to the **`options`** line:
+**Daily fan control is CoolerControl on Arch** for the AXP90 — see [`arch_install.md`](arch_install.md). BIOS does **not** own the CPU curve after boot. GPU fans stay on the card (NVIDIA / CoolerControl NVML).
 
-```text
-amdgpu.ppfeaturemask=0xffffffff
-```
+Gigabyte ITE chips (often **IT8689**) only allow OS manual PWM after this specific BIOS curve is set on the header you control. Without it, CoolerControl / `it87` cannot take **CPU_FAN**.
 
-Example:
+| Setting | Set to | What it does | Why this value |
+|---------|--------|--------------|----------------|
+| **Fan Speed Control** | **Manual** | BIOS curve mode vs preset. | Required so the EC exposes manual PWM to the `it87` driver. |
+| **FAN/PUMP Control Mode** | **PWM** | **PWM** (4-pin) vs **Voltage** (3-pin). | AXP90 is **4-pin PWM**. |
+| **FAN/PUMP Stop** | **Disabled** *(CPU fan)* | Fan-stop below a temp threshold. | Never allow CPU fan stop under load. |
+| **Curve** *(IT8689 unlock)* | PWM **40 / 40 / 40 / 40 / 40 / 40 / 100** · temps **0 / 90 / 90 / 90 / 90 / 90 / 90** | EC curve points CoolerControl docs require. | Holds **40 %** only until `coolercontrold` starts; **100 % @ 90 °C** failsafe. **Not** your tuned profile. |
 
-```text
-options root=UUID=... rw amdgpu.ppfeaturemask=0xffffffff
-```
+**Apply** on **CPU_FAN** → **F3** save → **F10**. Then build the real CPU curve in CoolerControl (CPU package temp → CPU_FAN).
 
-Rebuild initramfs and reboot:
+---
 
-```bash
-sudo mkinitcpio -P
-sudo reboot
-```
+## GPU tuning — Arch (NVIDIA)
 
-Verify:
+**Card:** HP **OMEN** desktop OEM **RTX 5090** 32 GB (~**575 W** stock TGP, ~**330 mm**, axial cooler). Heat dumps into the SFF chassis — establish a stock thermal baseline (games **and** LLM load) before undervolting.
 
-```bash
-cat /sys/module/amdgpu/parameters/ppfeaturemask
-```
+**Driver:** `nvidia-open` — see [`arch_install.md`](arch_install.md).
 
-### 5.2 Install and start LACT
+| Setting | Value | What it does | Why for OpenITX |
+|---------|-------|--------------|-----------------|
+| **Power limit** | **Stock** first | Caps sustained board power (TGP). | OEM ~**575 W** stresses SF1000 + OpenITX airflow. Lower with `nvidia-smi -pl` after measuring soak. |
+| **Voltage / curve** | **Stock** → TBD undervolt | Shifts V/F curve (Coolbits / third-party tools). | No validated UV yet for this OEM card in this case. |
+| **Core / mem clock** | **Stock** | Manual GPU/VRAM offset. | Prefer undervolt over OC in SFF; VRAM OC adds heat for little gain. |
+| **Fan curve** | OEM auto, or custom below | Temp → fan %. | Axial cooler must move air; never **0 %** fan under load. |
 
-```bash
-paru -S lact
-sudo systemctl enable --now lactd
-```
+### Provisional fan targets
 
-Open **LACT** from the app grid (or `lact gui`).
+Target **≤ 85 °C** GPU hotspot in games / sustained inference when possible.
 
-### 5.3 Baseline logging
-
-Launch a repeatable game/benchmark with MangHud:
-
-```bash
-gamemoderun mangohud %command%
-```
-
-Record for **10–15 min** under load:
-
-- GPU junction temp
-- GPU power (W)
-- Core clock (MHz)
-- FPS
-
-### 5.4 Undervolt procedure
-
-In **LACT** → select **RX 7900 XT** → **Performance** tab:
-
-1. Switch power profile to **Manual**.
-2. Apply a small **voltage offset** first: **−50 mV** *(or reduce voltage in the frequency/voltage curve if using curve editor)*.
-3. Apply → run the same game 30 min.
-4. If stable and FPS within **~1 %** of baseline, try **−75 mV**, then **−100 mV**.
-5. **Stop** when: artifacting, crash, large FPS drop, or no further temp improvement.
-
-**Goals (reference blower in SFF):**
-
-- Lower junction temp → less hot air recirculated over CPU
-- Lower fan RPM at same performance → less noise
-
-### 5.5 Blower fan curve (LACT)
-
-**Thermals** tab → **Custom curve** (not automatic):
-
-| Junction °C | Fan % |
+| GPU temp °C | Fan % |
 |-------------|-------|
-| 40 | 25 |
-| 60 | 40 |
-| 70 | 55 |
-| 80 | 70 |
-| 90 | 85 |
-| 100 | 100 |
+| ≤ 40 | **30** |
+| 55 | **40** |
+| 65 | **55** |
+| 75 | **70** |
+| 85 | **85** |
+| 90+ | **100** |
 
-After undervolt validates, try **lowering each tier by ~5–10 %** and retest.
+**Do not:** 0 % fan under load; raising power limit above stock in this case.
 
-**Never** set 0 % on a reference blower GPU.
+**Power cable:** **Native 12V-2x6 confirmed** — keep fully seated; avoid sharp bends at the GPU plug. If PSU trips under LLM load: `nvidia-smi -pl 450` (tune to taste).
 
-### 5.6 Save LACT profile
-
-Screenshot or export profile settings into the **Final settings log** at the top of this doc.
-
-### 5.7 GPU rollback
-
-| Issue | Fix |
-|-------|-----|
-| Artifacts / crash | Reduce UV offset; reset LACT to default |
-| Overdrive missing | Check `ppfeaturemask`; `mkinitcpio -P`; reboot |
-| Settings not applying | Confirm `lactd` running: `systemctl status lactd` |
-
----
-
-## Phase 6 — Validation & lock-in
-
-### 6.1 Target metrics
-
-| Metric | Target | Max acceptable |
-|--------|--------|----------------|
-| CPU gaming | 70–85 °C | 90 °C |
-| CPU all-core stress | 85–95 °C | 95 °C *(AMD design)* |
-| GPU junction gaming | 75–90 °C | 100 °C |
-| Gaming FPS vs baseline | Within 1–2 % | — |
-
-### 6.2 Final test suite
-
-Run over **2–3 sessions** (not all in one day):
-
-```bash
-# Desktop + browser — 1 h
-# Gaming — 2 h combined
-stress-ng --cpu 0 --timeout 30m
-stress-ng --vm 2 --vm-bytes 42G --timeout 30m
-dmesg | grep -i mce
-journalctl -b | grep -iE 'hardware error|mce'
-```
-
-### 6.3 BIOS lock-in
-
-1. **Memory Context Restore** → **Enabled** *(faster boot)*.
-2. **Save Fan Profile** again.
-3. Save BIOS profile to flash / photo all tuning screens.
-4. Fill in **Final settings log** at top of this document.
-
-### 6.4 Lock-in checklist
-
-- [ ] XMP 6800 stable 24 h+ *(or documented fallback speed)*
-- [ ] BIOS flat Manual handoff saved (Phase 2)
-- [ ] CoolerControl enabled — see [`post_install.md` § 12](post_install.md#12-fan-control-coolercontrol)
-- [ ] Curve Optimizer value documented
-- [ ] LACT GPU profile saved
-- [ ] No WHEA / MCE in `dmesg`
-- [ ] 1 week daily use without crashes
-- [ ] Commit updated `bios_optimize.md` final values to git
+**Targets:** CPU gaming/inference **70–85 °C** (≤ 90 °C) · GPU **≤ 85–90 °C** under sustained load · watch PSU transient headroom on SF1000
 
 ---
 
 ## Troubleshooting
 
-### Will not POST after RAM change
+| Problem | Fix |
+|---------|-----|
+| No POST after memory change | Clear CMOS → one stick in A2 → JEDEC 5600 → re-apply Memory table |
+| RAM training fails after BIOS update | Retry; if needed bump **SOC** to **1.20 V** |
+| WHEA / idle freeze with CO **−35** | Back off Curve Optimizer by **5**; test light-load stability |
+| Game stutter | Toggle **Global C-state Control** Enabled ↔ Disabled |
+| Fans stuck ~40 % | CoolerControl / `it87` not loaded — see [`arch_install.md`](arch_install.md); confirm BIOS unlock curve |
+| GPU crash / black screen under load | Reseat **12V-2x6**; `nvidia-smi -pl` −5–10 %; check SF1000 headroom |
 
-1. Clear CMOS.
-2. One DIMM in A2, boot, disable XMP.
-3. Shut down, add second DIMM, enable XMP.
-4. Update BIOS.
-
-### Random freezes after Curve Optimizer
-
-1. Reduce CO by **5** (less negative).
-2. Confirm RAM stable (`stress-ng --vm`).
-3. Check `dmesg` for MCE — may be memory not CPU.
-
-### CPU always at 95 °C in stress
-
-Normal for **9800X3D** under **all-core** load ([TechPowerUp](https://www.techpowerup.com/review/amd-ryzen-7-9800x3d/25.html)). Worry if **gaming** constantly exceeds 90 °C — raise intakes or add PPT cap.
-
-### GPU thermals hurt CPU temps
-
-Reference blower recirculates heat. **Phase 5 GPU undervolt** + bottom intake curves are the main fix.
-
-### Clear CMOS procedure
-
-1. Shut down, switch off PSU.
-2. Press **Clear CMOS** button *(or short jumper per manual)* ~5 s.
-3. Power on → re-enter BIOS → redo Phases 0–2 minimum.
-
----
-
-## Quick reference — BIOS menu map
-
-| Task | Typical path (Gigabyte B850I) |
-|------|-------------------------------|
-| XMP | M.I.T. → Advanced Memory Settings → XMP |
-| PBO / Curve Optimizer | Tweaker → Advanced AMD Overclocking |
-| Above 4G / Re-Size BAR | Settings → IO Ports |
-| Smart Fan 6 | F2 / Tuner → Smart Fan 6 |
-| Q-Flash BIOS update | F8 or Q-Flash in BIOS |
-| Load defaults | F7 or Save & Exit → Load Optimized Defaults |
-
----
-
-## Related files
-
-| File | Purpose |
-|------|---------|
-| [`bios_optimize_plan.md`](bios_optimize_plan.md) | Research, constraints, rationale |
-| [`parts.md`](parts.md) | Full hardware list |
-| [`post_install.md`](post_install.md) | Arch install, Steam, MangHud, sensors |
+Hardware: [`parts.md`](parts.md) · Install: [`arch_install.md`](arch_install.md) · Overview: [`README.md`](README.md)

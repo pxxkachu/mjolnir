@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+# Mjolnir FULL Arch install — run from the official Arch Linux live ISO (UEFI).
+#
+# Wipes the target disk, pacstraps Arch, configures systemd-boot + user, then
+# runs mjolnir-postinstall.sh (repo binaries + paru-bin) inside the new root.
+#
+# Example:
+#   # Boot Arch ISO, connect network, then:
+#   pacman -Sy --noconfirm git
+#   git clone <this-repo> /root/mjolnir && cd /root/mjolnir
+#   ./scripts/mjolnir-install.sh \
+#       --disk /dev/nvme0n1 \
+#       --user jhle \
+#       --confirm-wipe
+#
+# Options:
+#   --it87              Also DKMS-compile Gigabyte it87 (not binary)
+#   --fs ext4|btrfs     Root/home filesystem (default: ext4)
+#   --hostname NAME     Default: mjolnir
+#   --timezone ZONE     Default: America/Chicago
+#   --skip-postinstall  Only base + bootloader (run postinstall later)
+#   --dry-run           Print the plan; make no changes (no root required)
+#
+# DANGER: --confirm-wipe permanently destroys all data on --disk.
+# See ../arch_install.md
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+POSTINSTALL="$SCRIPT_DIR/mjolnir-postinstall.sh"
+
+DISK=""
+CONFIRM_WIPE=0
+USERNAME=""
+HOSTNAME="mjolnir"
+TIMEZONE="America/Chicago"
+FS="ext4"
+IT87=0
+SKIP_POST=0
+DRY_RUN=0
+ROOT_SIZE_GIB=100
+EFI_SIZE="1GiB"
+
+usage() {
+  cat <<'EOF'
+Mjolnir full installer (Arch live ISO → desktop/AI stack)
+
+Required:
+  --disk /dev/nvmeX     Target disk (ENTIRE disk will be wiped)
+  --user NAME           First login user (wheel + sudo)
+  --confirm-wipe        Acknowledge destructive wipe
+
+Optional:
+  --hostname mjolnir
+  --timezone America/Chicago
+  --fs ext4|btrfs       Default ext4
+  --root-size-gib 100   Root partition size
+  --it87                Install it87 via DKMS (compiles)
+  --skip-postinstall    Stop after base + bootloader
+  --dry-run             Show plan only; no disk writes
+  -h, --help
+
+After reboot: GDM → GNOME; run `tailscale up` and rebind Ollama if needed.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --disk) DISK="${2:?}"; shift 2 ;;
+    --user) USERNAME="${2:?}"; shift 2 ;;
+    --confirm-wipe) CONFIRM_WIPE=1; shift ;;
+    --hostname) HOSTNAME="${2:?}"; shift 2 ;;
+    --timezone) TIMEZONE="${2:?}"; shift 2 ;;
+    --fs) FS="${2:?}"; shift 2 ;;
+    --root-size-gib) ROOT_SIZE_GIB="${2:?}"; shift 2 ;;
+    --it87) IT87=1; shift ;;
+    --skip-postinstall) SKIP_POST=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+run() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    printf 'DRY-RUN:'
+    printf ' %q' "$@"
+    printf '\n'
+  else
+    "$@"
+  fi
+}
+
+[[ -n "$DISK" ]] || die "Missing --disk"
+[[ -n "$USERNAME" ]] || die "Missing --user"
+[[ "$FS" == "btrfs" || "$FS" == "ext4" ]] || die "--fs must be btrfs or ext4"
+[[ -f "$POSTINSTALL" ]] || die "Missing $POSTINSTALL"
+
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  [[ "$(id -u)" -eq 0 ]] || die "Run as root from the Arch live ISO"
+  [[ "$CONFIRM_WIPE" -eq 1 ]] || die "Refusing to wipe without --confirm-wipe"
+  [[ -b "$DISK" ]] || die "Not a block device: $DISK"
+  command -v pacstrap >/dev/null || die "pacstrap not found — boot the official Arch ISO"
+  [[ -d /sys/firmware/efi ]] || die "UEFI required (CSM off)"
+  if [[ -f /etc/mjolnir-installed ]]; then
+    die "This looks like an installed Mjolnir system. Use mjolnir-postinstall.sh instead."
+  fi
+else
+  [[ "$CONFIRM_WIPE" -eq 1 ]] || echo "NOTE: dry-run without --confirm-wipe (would be required for real run)"
+fi
+
+part_name() {
+  local disk="$1" num="$2"
+  if [[ "$disk" =~ [0-9]$ ]] || [[ "$disk" == *nvme* ]] || [[ "$disk" == *mmcblk* ]]; then
+    echo "${disk}p${num}"
+  else
+    echo "${disk}${num}"
+  fi
+}
+
+P_EFI="$(part_name "$DISK" 1)"
+P_ROOT="$(part_name "$DISK" 2)"
+P_HOME="$(part_name "$DISK" 3)"
+
+echo "==> Mjolnir FULL install$([[ "$DRY_RUN" -eq 1 ]] && echo ' [DRY-RUN]')"
+echo "    Disk:     $DISK"
+echo "    Parts:    $P_EFI (EFI) · $P_ROOT (root) · $P_HOME (home)"
+echo "    User:     $USERNAME"
+echo "    Hostname: $HOSTNAME"
+echo "    FS:       $FS (EFI ${EFI_SIZE}, root ${ROOT_SIZE_GIB}GiB, home = rest)"
+echo "    Post:     $([[ "$SKIP_POST" -eq 1 ]] && echo skip || echo mjolnir-postinstall.sh)$([[ "$IT87" -eq 1 ]] && echo ' + it87')"
+echo "    THIS WILL DESTROY ALL DATA ON $DISK"
+[[ "$DRY_RUN" -eq 0 ]] && sleep 2
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo
+  echo "==> Planned steps"
+  run timedatectl set-ntp true
+  run pacman -Sy --noconfirm --needed archlinux-keyring
+  run sgdisk --zap-all "$DISK"
+  run sgdisk -n "1:0:+${EFI_SIZE}" -t 1:ef00 -c 1:EFI "$DISK"
+  run sgdisk -n "2:0:+${ROOT_SIZE_GIB}GiB" -t 2:8300 -c 2:root "$DISK"
+  run sgdisk -n 3:0:0 -t 3:8300 -c 3:home "$DISK"
+  run mkfs.fat -F32 -n EFI "$P_EFI"
+  if [[ "$FS" == "ext4" ]]; then
+    run mkfs.ext4 -F -L root "$P_ROOT"
+    run mkfs.ext4 -F -L home "$P_HOME"
+    run mount "$P_ROOT" /mnt
+    run mkdir -p /mnt/boot /mnt/home
+    run mount "$P_EFI" /mnt/boot
+    run mount "$P_HOME" /mnt/home
+  else
+    run mkfs.btrfs -f -L root "$P_ROOT"
+    run mkfs.btrfs -f -L home "$P_HOME"
+    echo "DRY-RUN: btrfs subvol=@ mount sequence"
+  fi
+  BASE_PKGS=(base linux linux-firmware amd-ucode networkmanager sudo vim git efibootmgr)
+  [[ "$FS" == "btrfs" ]] && BASE_PKGS+=(btrfs-progs)
+  [[ "$IT87" -eq 1 ]] && BASE_PKGS+=(linux-headers dkms base-devel)
+  run pacstrap -K /mnt "${BASE_PKGS[@]}"
+  run genfstab -U /mnt
+  echo "DRY-RUN: arch-chroot configure locale/user/sudo/bootctl"
+  echo "DRY-RUN: write /boot/loader/entries/arch.conf (root UUID + nvidia_drm.modeset=1)"
+  echo "DRY-RUN: copy $REPO_ROOT → /mnt/opt/mjolnir"
+  if [[ "$SKIP_POST" -eq 0 ]]; then
+    POST_ARGS=(--user "$USERNAME" --no-tailscale-up --dry-run)
+    [[ "$IT87" -eq 1 ]] && POST_ARGS+=(--it87)
+    echo "DRY-RUN: arch-chroot MJOLNIR_CHROOT=1 $POSTINSTALL ${POST_ARGS[*]}"
+    # Nested dry-run of postinstall (no root needed)
+    MJOLNIR_CHROOT=1 bash "$POSTINSTALL" "${POST_ARGS[@]}"
+  else
+    echo "DRY-RUN: skip postinstall"
+  fi
+  echo "DRY-RUN: ln -sfn /opt/mjolnir /home/${USERNAME}/mjolnir"
+  echo
+  echo "==> DRY-RUN complete (no changes made)"
+  exit 0
+fi
+
+# --- live environment ---
+echo "==> Network / clock / mirrors"
+timedatectl set-ntp true || true
+pacman -Sy --noconfirm --needed archlinux-keyring || true
+if command -v reflector >/dev/null; then
+  reflector --protocol https --latest 20 --sort rate --save /etc/pacman.d/mirrorlist || true
+fi
+
+# --- wipe + partition ---
+echo "==> Wiping and partitioning $DISK"
+umount -R /mnt 2>/dev/null || true
+swapoff -a 2>/dev/null || true
+sgdisk --zap-all "$DISK"
+sgdisk -n 1:0:+${EFI_SIZE} -t 1:ef00 -c 1:EFI "$DISK"
+sgdisk -n 2:0:+${ROOT_SIZE_GIB}GiB -t 2:8300 -c 2:root "$DISK"
+sgdisk -n 3:0:0 -t 3:8300 -c 3:home "$DISK"
+partprobe "$DISK" || true
+sleep 1
+
+P_EFI="$(part_name "$DISK" 1)"
+P_ROOT="$(part_name "$DISK" 2)"
+P_HOME="$(part_name "$DISK" 3)"
+[[ -b "$P_EFI" && -b "$P_ROOT" && -b "$P_HOME" ]] || die "Partitions not found after sgdisk"
+
+echo "==> Formatting"
+mkfs.fat -F32 -n EFI "$P_EFI"
+case "$FS" in
+  btrfs)
+    mkfs.btrfs -f -L root "$P_ROOT"
+    mkfs.btrfs -f -L home "$P_HOME"
+    mount "$P_ROOT" /mnt
+    btrfs subvolume create /mnt/@
+    umount /mnt
+    mount -o subvol=@,compress=zstd:1,noatime "$P_ROOT" /mnt
+    mkdir -p /mnt/{boot,home}
+    mount "$P_EFI" /mnt/boot
+    mount -o compress=zstd:1,noatime "$P_HOME" /mnt/home
+    ;;
+  ext4)
+    mkfs.ext4 -F -L root "$P_ROOT"
+    mkfs.ext4 -F -L home "$P_HOME"
+    mount "$P_ROOT" /mnt
+    mkdir -p /mnt/{boot,home}
+    mount "$P_EFI" /mnt/boot
+    mount "$P_HOME" /mnt/home
+    ;;
+esac
+
+# --- pacstrap base ---
+echo "==> pacstrap base system"
+BASE_PKGS=(
+  base linux linux-firmware amd-ucode
+  networkmanager sudo vim git
+  efibootmgr
+)
+[[ "$FS" == "btrfs" ]] && BASE_PKGS+=(btrfs-progs)
+[[ "$IT87" -eq 1 ]] && BASE_PKGS+=(linux-headers dkms base-devel)
+
+pacstrap -K /mnt "${BASE_PKGS[@]}"
+
+echo "==> fstab"
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# --- chroot configure ---
+echo "==> Configuring system (locale, user, bootloader)"
+ROOT_UUID="$(blkid -s UUID -o value "$P_ROOT")"
+
+# Copy installer scripts into the new system for postinstall + future use
+install -d /mnt/opt/mjolnir
+cp -a "$REPO_ROOT"/. /mnt/opt/mjolnir/
+chmod +x /mnt/opt/mjolnir/scripts/*.sh
+
+arch-chroot /mnt /bin/bash -euo pipefail <<CHROOT
+set -euo pipefail
+ln -sf /usr/share/zoneinfo/${TIMEZONE} /etc/localtime
+hwclock --systohc
+
+sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+locale-gen
+echo 'LANG=en_US.UTF-8' >/etc/locale.conf
+echo '${HOSTNAME}' >/etc/hostname
+cat >/etc/hosts <<EOF
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   ${HOSTNAME}.localdomain ${HOSTNAME}
+EOF
+
+echo 'mjolnir' >/etc/mjolnir-installed
+
+echo '%wheel ALL=(ALL:ALL) ALL' >/etc/sudoers.d/wheel
+chmod 440 /etc/sudoers.d/wheel
+if ! id '${USERNAME}' &>/dev/null; then
+  useradd -m -G wheel,video,audio,storage,input -s /bin/bash '${USERNAME}'
+fi
+echo "==> Set password for ${USERNAME}"
+passwd '${USERNAME}'
+echo "==> Set password for root"
+passwd root
+
+systemctl enable NetworkManager.service
+
+bootctl install
+install -d /boot/loader/entries
+cat >/boot/loader/loader.conf <<EOF
+default arch.conf
+timeout 3
+console-mode max
+editor no
+EOF
+mkinitcpio -P
+CHROOT
+
+# Boot entry written from host (clear UUID / btrfs flags)
+{
+  echo "title   Arch Linux (Mjolnir)"
+  echo "linux   /vmlinuz-linux"
+  echo "initrd  /amd-ucode.img"
+  echo "initrd  /initramfs-linux.img"
+  if [[ "$FS" == "btrfs" ]]; then
+    echo "options root=UUID=${ROOT_UUID} rootflags=subvol=@ rw nvidia_drm.modeset=1"
+  else
+    echo "options root=UUID=${ROOT_UUID} rw nvidia_drm.modeset=1"
+  fi
+} >/mnt/boot/loader/entries/arch.conf
+
+# --- postinstall inside chroot ---
+if [[ "$SKIP_POST" -eq 0 ]]; then
+  echo "==> Running mjolnir-postinstall.sh inside new root"
+  POST_ARGS=(--user "$USERNAME" --no-tailscale-up)
+  [[ "$IT87" -eq 1 ]] && POST_ARGS+=(--it87)
+  arch-chroot /mnt env MJOLNIR_CHROOT=1 /opt/mjolnir/scripts/mjolnir-postinstall.sh "${POST_ARGS[@]}"
+else
+  echo "==> Skipping postinstall (--skip-postinstall)"
+fi
+
+# Symlink docs into user home for convenience
+arch-chroot /mnt /bin/bash -c "ln -sfn /opt/mjolnir /home/${USERNAME}/mjolnir && chown -h ${USERNAME}:${USERNAME} /home/${USERNAME}/mjolnir"
+
+echo
+echo "==> FULL INSTALL COMPLETE"
+echo "    umount -R /mnt"
+echo "    reboot"
+echo "    Remove USB → boot systemd-boot → GDM → GNOME"
+echo "    Then: tailscale up"
+echo "          TS=\$(tailscale ip -4)"
+echo "          sudo systemctl edit ollama   # OLLAMA_HOST=\$TS:11434"
+echo "          sudo systemctl restart ollama"
+echo "    BIOS Smart Fan unlock: bios_optimize.md"
+echo "    Optional later: sudo /opt/mjolnir/scripts/mjolnir-postinstall.sh --user ${USERNAME} --it87"
