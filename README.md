@@ -32,7 +32,7 @@ Full BOM → [`parts.md`](parts.md)
 |-------|--------|
 | **OS** | Arch Linux (sole OS) |
 | **Desktop** | **GNOME** minimal (Wayland) + GDM |
-| **AI** | **llama-cpp** + **ggml-cuda** · `llama-server` · **xcaddy** + **Porkbun** → `https://ai.lehaus.io` |
+| **AI** | **llama-cpp** + **ggml-cuda** · `llama-server` · **Caddy** (download API + **Porkbun**) → `https://ai.lehaus.io` |
 | **Gaming** | Deferred (Steam not installed) |
 | **Fans** | CoolerControl (+ optional `it87`) |
 
@@ -50,7 +50,7 @@ Full BOM → [`parts.md`](parts.md)
 |------|----------------|
 | **1. BIOS** | [`bios_optimize.md`](bios_optimize.md) |
 | **2. Base install** | [`install.sh`](install.sh) + first half of [`arch_install.md`](arch_install.md) |
-| **3. Stack** | Rest of [`arch_install.md`](arch_install.md) — NVIDIA, GNOME, llama.cpp, xcaddy/Porkbun, … |
+| **3. Stack** | Rest of [`arch_install.md`](arch_install.md) — NVIDIA, GNOME, llama.cpp, Caddy/Porkbun, … |
 
 Live ISO:
 
@@ -90,7 +90,10 @@ aur_helper: paru-bin
 repo: https://github.com/pxxkachu/mjolnir
 llama_api: https://ai.lehaus.io
 llama_bind: "127.0.0.1:8080"
-caddy: xcaddy_porkbun_dns
+caddy: download_api_porkbun_dns
+caddy_bin: /usr/local/bin/caddy
+caddy_home: /var/lib/caddy
+caddy_user: caddy
 workloads:
   - local_ai_server_llamacpp
   - homelab_control

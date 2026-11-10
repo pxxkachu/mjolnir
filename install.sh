@@ -104,6 +104,12 @@ need_cmd mkfs.ext4   e2fsprogs
 need_cmd lsblk       util-linux
 need_cmd blockdev    util-linux
 need_cmd reflector   reflector
+need_cmd curl        curl
+
+echo "== Checking network connectivity (before any wipe) =="
+if ! curl -fsS --connect-timeout 10 --max-time 30 https://archlinux.org >/dev/null; then
+  err_exit "No network. Verify connectivity (Ethernet preferred) before running this script."
+fi
 
 # ---- Disk discovery ----
 AVAILABLE_DISKS=()
@@ -159,8 +165,14 @@ echo ""
 read -r -p "EFI partition size [1G]: " EFI_SIZE
 EFI_SIZE=${EFI_SIZE:-1G}
 
-read -r -p "Root partition size GiB [100]: " ROOT_SIZE_GIB
-ROOT_SIZE_GIB=${ROOT_SIZE_GIB:-100}
+while true; do
+  read -r -p "Root partition size GiB [100]: " ROOT_SIZE_GIB
+  ROOT_SIZE_GIB=${ROOT_SIZE_GIB:-100}
+  if [[ "$ROOT_SIZE_GIB" =~ ^[0-9]+$ ]] && ((ROOT_SIZE_GIB >= 20)); then
+    break
+  fi
+  echo "Invalid. Enter an integer GiB >= 20."
+done
 
 while true; do
   read -r -p "Hostname [mjolnir]: " HOSTNAME
@@ -259,13 +271,14 @@ mkdir -p /mnt/{boot,home}
 mount -o fmask=0077,dmask=0077 "$EFI_PART" /mnt/boot
 mount "$HOME_PART" /mnt/home
 
-echo "== Checking network connectivity =="
-if ! curl -fsS --connect-timeout 10 --max-time 30 https://archlinux.org >/dev/null; then
-  err_exit "No network. Verify connectivity before running this script."
-fi
-
 echo "== Selecting fastest US HTTPS mirrors =="
-reflector --country US --protocol https --age 12 --latest 20 --sort rate --save /etc/pacman.d/mirrorlist
+if ! reflector --country US --protocol https --age 12 --latest 20 --sort rate --save /etc/pacman.d/mirrorlist; then
+  echo "WARNING: reflector failed or timed out — falling back to geo + Rackspace HTTPS mirrors."
+  cat >/etc/pacman.d/mirrorlist <<'MIRRORS'
+Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
+MIRRORS
+fi
 
 echo "== Installing base packages =="
 # B850I Rev 1.0 + 9800X3D + RTX 5090 — no linux-firmware meta (pulls intel/etc.)
@@ -323,8 +336,8 @@ bootctl install
 ROOTUUID=\$(blkid -s UUID -o value "${ROOT_PART}")
 cat >/boot/loader/loader.conf <<LOADER
 default arch.conf
-timeout 3
-console-mode max
+timeout 0
+console-mode keep
 editor no
 LOADER
 cat >/boot/loader/entries/arch.conf <<ENTRY

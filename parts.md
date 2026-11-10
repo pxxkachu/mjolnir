@@ -159,8 +159,8 @@ Use this file as the hardware and software source of truth when writing guides o
 | Fans | **CoolerControl** (+ optional `--it87`); BIOS unlock for CPU_FAN |
 | Install | [`install.sh`](install.sh) base wipe; [`arch_install.md`](arch_install.md) copy-paste stack (dxp480tp-style) |
 | Homelab | **Tailscale** |
-| HTTPS front | **xcaddy** → `/usr/local/bin/caddy` · **`ai.lehaus.io`** · **not** stock `caddy` / certbot |
-| Firewall | **nftables** — inbound on `tailscale0` only |
+| HTTPS front | Caddy download API + **Porkbun** → `/usr/local/bin/caddy` · configs in `/var/lib/caddy` · user `caddy` · **`ai.lehaus.io`** · **not** stock `caddy` / certbot |
+| Exposure | static `TS_IP` + wait-gate + `default_bind` + `(tailnet)` ACL; llama on localhost |
 | Idle / sleep | **Disabled** (always-on AI box) |
 | SSD TRIM | **`fstrim.timer`** (weekly) |
 | GPU daemon | **nvidia-persistenced** (from `nvidia-utils`) |
@@ -266,11 +266,13 @@ network:
   tailscale: required
   llama_bind: "127.0.0.1:8080"
   llama_api: "https://ai.lehaus.io"
-  caddy: xcaddy_porkbun_dns
+  caddy: download_api_porkbun_dns
   caddy_bin: /usr/local/bin/caddy
+  caddy_home: /var/lib/caddy
+  caddy_user: caddy
   caddy_unit: /etc/systemd/system/caddy.service
   caddy_domain: ai.lehaus.io
-  caddy_not: [stock_arch_caddy, certbot, lego]
+  caddy_not: [stock_arch_caddy, certbot, lego, on_box_xcaddy_default]
   terminal: ghostty
   ghostty_nautilus: true
   wol: optional
@@ -301,7 +303,7 @@ virtualization: false
 | Repo | https://github.com/pxxkachu/mjolnir |
 | OS | **Arch Linux only** (wipe Windows) |
 | Desktop | **GNOME** minimal (Wayland) + **GDM** |
-| AI stack | **llama-cpp** + **ggml-cuda** · **`https://ai.lehaus.io`** (xcaddy/Caddy) · Tailscale clients |
+| AI stack | **llama-cpp** + **ggml-cuda** · **`https://ai.lehaus.io`** (Caddy + Porkbun) · Tailscale clients |
 | Gaming | Deferred |
 | Disk | Samsung **990 PRO 2 TB** PCIe Gen4 NVMe M.2 (`/dev/nvme0n1`) |
 | Bootloader | **systemd-boot** |
@@ -309,5 +311,5 @@ virtualization: false
 | BIOS / tuning | [`bios_optimize.md`](bios_optimize.md) |
 | Install guide | [`arch_install.md`](arch_install.md) |
 | Overview | [`README.md`](README.md) |
-| Firewall / no-sleep / persistenced | [`arch_install.md`](arch_install.md) |
+| No-sleep / persistenced | [`arch_install.md`](arch_install.md) |
 | Additional storage / NAS | TBD when `/home` fills (GGUF models) |
