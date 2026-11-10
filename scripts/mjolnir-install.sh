@@ -8,10 +8,12 @@
 #   # Boot Arch ISO, connect network, then:
 #   pacman -Sy --noconfirm git
 #   git clone https://github.com/pxxkachu/mjolnir.git /root/mjolnir && cd /root/mjolnir
-#   ./scripts/mjolnir-install.sh \
-#       --disk /dev/nvme0n1 \
-#       --user laika \
-#       --confirm-wipe
+#   chmod +x scripts/*.sh
+#   bash scripts/mjolnir-install.sh
+#   bash scripts/mjolnir-install.sh --dry-run
+#
+# Defaults: --disk /dev/nvme0n1 --user laika --confirm-wipe
+# Runs mjolnir-postinstall.sh automatically (unless --skip-postinstall).
 #
 # Options:
 #   --it87              Also DKMS-compile Gigabyte it87 (not binary)
@@ -21,7 +23,7 @@
 #   --skip-postinstall  Only base + bootloader (run postinstall later)
 #   --dry-run           Print the plan; make no changes (no root required)
 #
-# DANGER: --confirm-wipe permanently destroys all data on --disk.
+# DANGER: default path wipes /dev/nvme0n1. Use --dry-run to preview.
 # See ../arch_install.md
 
 set -euo pipefail
@@ -30,9 +32,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 POSTINSTALL="$SCRIPT_DIR/mjolnir-postinstall.sh"
 
-DISK=""
-CONFIRM_WIPE=0
-USERNAME=""
+DISK="/dev/nvme0n1"
+CONFIRM_WIPE=1
+USERNAME="laika"
 HOSTNAME="mjolnir"
 TIMEZONE="America/Chicago"
 FS="ext4"
@@ -42,26 +44,48 @@ DRY_RUN=0
 ROOT_SIZE_GIB=100
 EFI_SIZE="1GiB"
 
+# Firmware for THIS machine only:
+#   Gigabyte B850I AORUS PRO Rev 1.0 + Ryzen 7 9800X3D + RTX 5090
+# Do NOT install the linux-firmware metapackage (pulls intel/broadcom/atheros/…).
+# 9800X3D has no iGPU → no amdgpu/radeon.
+# Rev 1.0: Realtek 2.5GbE + Realtek RTL8922AE Wi‑Fi 7 / BT + ALC4080 → realtek only.
+FIRMWARE_PKGS=(
+  linux-firmware-nvidia
+  linux-firmware-realtek
+)
+
 usage() {
   cat <<'EOF'
 Mjolnir full installer (Arch live ISO → desktop/AI stack)
 
-Required:
-  --disk /dev/nvmeX     Target disk (ENTIRE disk will be wiped)
-  --user NAME           First login user (wheel + sudo)
-  --confirm-wipe        Acknowledge destructive wipe
-
-Optional:
+Defaults (this machine):
+  --disk /dev/nvme0n1
+  --user laika
+  --confirm-wipe        (on — wipes the target disk)
   --hostname mjolnir
   --timezone America/Chicago
-  --fs ext4|btrfs       Default ext4
-  --root-size-gib 100   Root partition size
+  --fs ext4
+  --root-size-gib 100
+  Post-install: runs automatically (NVIDIA, GNOME, Ollama, xcaddy, …)
+
+Optional:
+  --disk /dev/nvmeX     Override target disk
+  --user NAME           Override first login user
+  --hostname NAME
+  --timezone ZONE
+  --fs ext4|btrfs
+  --root-size-gib N
   --it87                Install it87 via DKMS (compiles)
   --skip-postinstall    Stop after base + bootloader
   --dry-run             Show plan only; no disk writes
   -h, --help
 
-After reboot: GDM → GNOME; run `tailscale up` and rebind Ollama if needed.
+Typical:
+  bash scripts/mjolnir-install.sh --dry-run
+  bash scripts/mjolnir-install.sh
+
+Do NOT also run mjolnir-postinstall.sh for a fresh install — install runs it.
+After reboot: GDM → GNOME → tailscale up → set CF_API_TOKEN → restart caddy.
 EOF
 }
 
@@ -100,7 +124,7 @@ run() {
 
 if [[ "$DRY_RUN" -eq 0 ]]; then
   [[ "$(id -u)" -eq 0 ]] || die "Run as root from the Arch live ISO"
-  [[ "$CONFIRM_WIPE" -eq 1 ]] || die "Refusing to wipe without --confirm-wipe"
+  [[ "$CONFIRM_WIPE" -eq 1 ]] || die "Refusing to wipe without --confirm-wipe (default is on for this machine)"
   [[ -b "$DISK" ]] || die "Not a block device: $DISK"
   command -v pacstrap >/dev/null || die "pacstrap not found — boot the official Arch ISO"
   [[ -d /sys/firmware/efi ]] || die "UEFI required (CSM off)"
@@ -132,6 +156,7 @@ echo "    Hostname: $HOSTNAME"
 echo "    Timezone: $TIMEZONE"
 echo "    FS:       $FS (EFI ${EFI_SIZE}, root ${ROOT_SIZE_GIB}GiB, home = rest)"
 echo "    Mirrors:  reflector --country US --sort rate (saved permanently)"
+echo "    Firmware: ${FIRMWARE_PKGS[*]} + amd-ucode (no intel / no linux-firmware meta)"
 echo "    Post:     $([[ "$SKIP_POST" -eq 1 ]] && echo skip || echo mjolnir-postinstall.sh)$([[ "$IT87" -eq 1 ]] && echo ' + it87')"
 echo "    THIS WILL DESTROY ALL DATA ON $DISK"
 [[ "$DRY_RUN" -eq 0 ]] && sleep 2
@@ -176,13 +201,17 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     run mkfs.btrfs -f -L home "$P_HOME"
     echo "DRY-RUN: btrfs subvol=@ mount sequence"
   fi
-  BASE_PKGS=(base linux linux-firmware amd-ucode networkmanager sudo vim git efibootmgr)
+  BASE_PKGS=(base linux amd-ucode "${FIRMWARE_PKGS[@]}" networkmanager sudo vim git efibootmgr)
   [[ "$FS" == "btrfs" ]] && BASE_PKGS+=(btrfs-progs)
   [[ "$IT87" -eq 1 ]] && BASE_PKGS+=(linux-headers dkms base-devel)
+  echo "DRY-RUN: pacstrap firmware=${FIRMWARE_PKGS[*]} (no linux-firmware meta / no intel)"
   run pacstrap -K /mnt "${BASE_PKGS[@]}"
   echo "DRY-RUN: install ranked mirrorlist → /mnt/etc/pacman.d/mirrorlist"
   run genfstab -U /mnt
   echo "DRY-RUN: arch-chroot configure locale/user/sudo/bootctl + timezone ${TIMEZONE}"
+  echo "DRY-RUN: arch-chroot passwd ${USERNAME}  (interactive TTY)"
+  echo "DRY-RUN: arch-chroot passwd root         (interactive TTY)"
+  echo "DRY-RUN: then postinstall + boot entry"
   echo "DRY-RUN: write /boot/loader/entries/arch.conf (root UUID + nvidia_drm.modeset=1)"
   echo "DRY-RUN: copy $REPO_ROOT → /mnt/opt/mjolnir"
   if [[ "$SKIP_POST" -eq 0 ]]; then
@@ -248,9 +277,10 @@ case "$FS" in
 esac
 
 # --- pacstrap base ---
-echo "==> pacstrap base system"
+echo "==> pacstrap base system (hardware-matched firmware only)"
 BASE_PKGS=(
-  base linux linux-firmware amd-ucode
+  base linux amd-ucode
+  "${FIRMWARE_PKGS[@]}"
   networkmanager sudo vim git
   efibootmgr
 )
@@ -258,6 +288,8 @@ BASE_PKGS=(
 [[ "$IT87" -eq 1 ]] && BASE_PKGS+=(linux-headers dkms base-devel)
 
 pacstrap -K /mnt "${BASE_PKGS[@]}"
+# Guard: never leave the meta package (would re-pull intel/etc. on upgrades)
+arch-chroot /mnt pacman -Rns --noconfirm linux-firmware 2>/dev/null || true
 
 echo "==> Installing ranked mirrorlist into new system"
 install -d /mnt/etc/pacman.d
@@ -304,10 +336,7 @@ chmod 440 /etc/sudoers.d/wheel
 if ! id '${USERNAME}' &>/dev/null; then
   useradd -m -G wheel,video,audio,storage,input -s /bin/bash '${USERNAME}'
 fi
-echo "==> Set password for ${USERNAME}"
-passwd '${USERNAME}'
-echo "==> Set password for root"
-passwd root
+# passwd is NOT run here — heredoc steals stdin; see interactive passwd below
 
 systemctl enable NetworkManager.service
 
@@ -321,6 +350,12 @@ editor no
 EOF
 mkinitcpio -P
 CHROOT
+
+# Interactive passwords need a real TTY (cannot run inside <<CHROOT heredoc)
+echo "==> Set password for ${USERNAME} (type twice; nothing will echo)"
+arch-chroot /mnt passwd "${USERNAME}"
+echo "==> Set password for root (type twice; nothing will echo)"
+arch-chroot /mnt passwd root
 
 # Boot entry written from host (clear UUID / btrfs flags)
 {

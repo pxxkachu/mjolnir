@@ -25,6 +25,18 @@ You run commands in **two places only**:
 
 The installer calls `arch-chroot` **internally** to configure the new disk and run postinstall. You never enter a chroot shell by hand for the recommended path.
 
+### What the script does vs what you do
+
+| Done by `mjolnir-install.sh` | You still do (Phases A / C / D) |
+|------------------------------|--------------------------------|
+| Wipe, partition, pacstrap, bootloader | Flash USB, BIOS boot settings, boot live ISO |
+| Firmware, NVIDIA, GNOME/GDM, Steam pkgs | Set **`laika`** + **`root`** passwords when prompted |
+| Ollama (localhost), xcaddy binary + unit, nftables, paru, fstrim, reflector | `umount -R /mnt` → `reboot` → remove USB → GDM login |
+| Copies repo → `/opt/mjolnir` | **`tailscale up`**, Cloudflare **A** for `ai.lehaus.io`, **`CF_API_TOKEN`**, restart caddy |
+| Enables services (caddy waits for token) | BIOS **Smart Fan** unlock; optional `--it87`; first model / Steam login |
+
+One command for the OS stack: `bash scripts/mjolnir-install.sh`. Do **not** also run postinstall on a fresh install. Full human checklist after the script: [Phase D](#phase-d--after-first-boot-you-do-these).
+
 ---
 
 ### Phase A — Before the live ISO (hardware / USB)
@@ -66,13 +78,16 @@ Use **`/dev/nvme0n1`** below only if that matches. Wrong disk = permanent data l
 pacman -Sy --noconfirm git
 git clone https://github.com/pxxkachu/mjolnir.git /root/mjolnir
 cd /root/mjolnir
+chmod +x scripts/*.sh
 ```
+
+If **`zsh: permission denied`** when running a script: either `chmod +x scripts/*.sh`, or invoke with **`bash scripts/…`** (does not need the execute bit). Real install must be **root** on the live ISO.
 
 **B4. Optional dry-run (safe — no writes)**
 
 ```bash
-./scripts/mjolnir-install.sh --disk /dev/nvme0n1 --user laika --confirm-wipe --dry-run
-./scripts/mjolnir-postinstall.sh --user laika --dry-run
+bash scripts/mjolnir-install.sh --dry-run
+# (defaults: --disk /dev/nvme0n1 --user laika --confirm-wipe; nests postinstall dry-run)
 ```
 
 ---
@@ -81,28 +96,27 @@ cd /root/mjolnir
 
 Still on the live ISO, still in `/root/mjolnir`. **Do not** `arch-chroot` or reboot yet.
 
+**Run one command only** — `mjolnir-install.sh` already runs `mjolnir-postinstall.sh` in chroot. Do **not** run postinstall separately for a fresh install.
+
 ```bash
-./scripts/mjolnir-install.sh \
-  --disk /dev/nvme0n1 \
-  --user laika \
-  --confirm-wipe
+bash scripts/mjolnir-install.sh
 ```
 
-Optional flags: `--it87` (DKMS compile), `--fs btrfs`.  
-Defaults: hostname `mjolnir`, timezone `America/Chicago`, US mirrors ranked by speed.
+Defaults: disk `/dev/nvme0n1`, user `laika`, wipe confirmed, hostname `mjolnir`, timezone `America/Chicago`, ext4, US mirrors.  
+Optional: `--it87`, `--fs btrfs`, `--skip-postinstall` (base only; then run postinstall later).
 
 **What the script does for you (no action needed):**
 
 1. Ranks fastest US HTTPS mirrors → writes `/etc/pacman.d/mirrorlist`
 2. Wipes + partitions the disk (EFI / root / home), formats **ext4**
-3. `pacstrap` base system; copies ranked mirrors into the new root
+3. `pacstrap` base + **hardware firmware only** (B850I **Rev 1.0**): `amd-ucode`, `linux-firmware-nvidia`, `linux-firmware-realtek` — **never** meta / intel / mediatek / amdgpu / other
 4. **`arch-chroot` automatically** — sets timezone, locale, hostname, creates user `laika`, installs systemd-boot
 5. **Still inside that automated chroot** — runs `mjolnir-postinstall.sh` (NVIDIA, GNOME/GDM, Ollama on localhost, **xcaddy** → `https://ai.lehaus.io`, Tailscale, nftables, paru-bin, fstrim, reflector, …)
 6. Copies this repo to `/opt/mjolnir` and links `~/mjolnir` for `laika`
 
 **Passwords (interactive — script pauses here)**
 
-There are **no password flags** on the installer (nothing on the command line). Mid-way through Phase C, after the disk is partitioned and the user account is created, `passwd` runs **inside the automated chroot**. The live ISO terminal will look like this:
+There are **no password flags** on the installer (nothing on the command line). Mid-way through Phase C, after locale/user setup, the script runs **`arch-chroot /mnt passwd …` on the live ISO TTY** (not inside the config heredoc — that would block input). The terminal will look like this:
 
 ```text
 ==> Set password for laika
@@ -129,7 +143,7 @@ Tips:
 
 After both passwords succeed, the script continues with bootloader + postinstall (no more password prompts). Wait until you see **`FULL INSTALL COMPLETE`**.
 
-**C1. Unmount and reboot (you run these)**
+**C1. Unmount and reboot (you run these — first steps after `FULL INSTALL COMPLETE`)**
 
 ```bash
 umount -R /mnt
@@ -141,52 +155,73 @@ reboot
 1. Remove the USB stick so the machine boots from the **990 PRO** (systemd-boot).
 2. You should get **GDM** → log in as **`laika`** with the password you set above (GNOME Wayland).
 3. If the screen is black: switch to a TTY with `Ctrl+Alt+F3`, log in as `laika` (or `root` if needed), run `nvidia-smi`, check [`Troubleshooting`](#troubleshooting).
+4. Continue with **[Phase D](#phase-d--after-first-boot-you-do-these)** — Tailscale, Cloudflare DNS, `CF_API_TOKEN`, checks, BIOS fan unlock.
 
-You are **not** in the live ISO anymore. You are **not** in a chroot. This is the real installed system.
+You are **not** in the live ISO anymore. You are **not** in a chroot. This is the real installed system. The OS stack is already installed; Phase D is only the remaining hand-finished items.
 
 ---
 
-### Phase D — After first boot (installed system)
+### Phase D — After first boot (you do these)
 
-Open **Console** (or any terminal) as `laika`.
+Open **Console** (or any terminal) as `laika`. These steps are **not** automated — the installer prints the same list at `FULL INSTALL COMPLETE`.
 
-Ollama listens on **`127.0.0.1:11434` only**. Clients use **`https://ai.lehaus.io`** on the tailnet. TLS is terminated by **xcaddy-built Caddy** (Cloudflare DNS-01). nftables allows inbound only on **`tailscale0`**.
+Ollama listens on **`127.0.0.1:11434` only**. Clients use **`https://ai.lehaus.io`** on the tailnet. TLS is terminated by **xcaddy-built Caddy** (Cloudflare DNS-01). nftables allows inbound only on **`tailscale0`**. Architecture: [HTTPS: ai.lehaus.io (xcaddy)](#https-ailehausio-xcaddy).
 
-See [HTTPS: ai.lehaus.io (xcaddy)](#https-ailehausio-xcaddy) for the architecture.
+**Checklist (do in order)**
+
+| # | Step | Done when |
+|---|------|-----------|
+| D1 | Join Tailscale | `tailscale ip -4` shows `100.x` |
+| D2 | Cloudflare DNS `ai` → that IP (grey cloud) | Record resolves to Tailscale IP |
+| D3 | Cloudflare API token with Zone:Read + DNS:Edit | Token created |
+| D4 | Set `CF_API_TOKEN` in `/etc/caddy/caddy.env`, restart caddy | `curl https://ai.lehaus.io/api/tags` OK |
+| D5 | Verify GPU / services | `nvidia-smi` + units healthy |
+| D6 | BIOS Smart Fan unlock for **CPU_FAN** | CoolerControl can drive the header |
+| D7 | Optional: `--it87` if PWM still stuck | `it87` loaded / fans move |
+| D8 | Optional first-use: pull a model, Steam login | AI + games usable |
+
+---
 
 **D1. Join Tailscale**
 
 ```bash
 sudo tailscale up
-# follow the URL / auth prompt
+# follow the URL / auth prompt in the browser
 tailscale ip -4
-# note this 100.x.x.x address for DNS
+# note this 100.x.x.x address — needed for DNS next
 ```
+
+(Installer uses `--no-tailscale-up` in chroot, so this never ran during Phase C.)
 
 **D2. Point `ai.lehaus.io` at this machine (Cloudflare DNS)**
 
 1. Cloudflare → **lehaus.io** → DNS → Add record:
    - **Type:** `A` (and `AAAA` if you use Tailscale IPv6)
    - **Name:** `ai`
-   - **IPv4:** output of `tailscale ip -4`
-   - **Proxy status:** **DNS only** (grey cloud — not proxied)
-2. Create an API token: **Zone → Zone:Read** + **DNS:Edit** for `lehaus.io`  
-   https://dash.cloudflare.com/profile/api-tokens
+   - **IPv4 / IPv6:** output of `tailscale ip -4` / `tailscale ip -6`
+   - **Proxy status:** **DNS only** (grey cloud — **not** proxied / orange cloud)
+2. Confirm from this box or another tailnet device: `getent hosts ai.lehaus.io` → Tailscale IP
 
-**D3. Give xcaddy-Caddy the Cloudflare token and start HTTPS**
+**D3. Create a Cloudflare API token**
+
+1. https://dash.cloudflare.com/profile/api-tokens → **Create Token**
+2. Permissions: **Zone → Zone:Read** + **Zone → DNS:Edit** for zone **`lehaus.io`**
+3. Copy the token once (needed in D4)
+
+**D4. Give xcaddy-Caddy the token and start HTTPS**
 
 ```bash
-# Confirm the xcaddy binary (not /usr/bin/caddy):
+# Confirm xcaddy binary (not stock /usr/bin/caddy):
 /usr/local/bin/caddy version
 systemctl cat caddy | grep ExecStart=
 # expect: ExecStart=/usr/local/bin/caddy run ...
 
 sudoedit /etc/caddy/caddy.env
-# set:  CF_API_TOKEN=your_token_here
-# file should be mode 600
+# set exactly one line (mode 600):
+#   CF_API_TOKEN=your_token_here
 
 sudo systemctl restart caddy
-sudo systemctl status caddy
+sudo systemctl status caddy --no-pager
 curl -fsS https://ai.lehaus.io/api/tags
 ```
 
@@ -197,32 +232,50 @@ export OLLAMA_HOST=https://ai.lehaus.io
 curl "$OLLAMA_HOST/api/tags"
 ```
 
-**D4. Quick checks**
+If cert/TLS fails: wait for DNS to propagate, re-check grey-cloud A record, `journalctl -u caddy -e`.
+
+**D5. Quick checks**
 
 ```bash
-nvidia-smi
-systemctl status nvidia-persistenced sleep.target fstrim.timer reflector.timer caddy nftables
+nvidia-smi                                          # RTX 5090
+systemctl status nvidia-persistenced sleep.target \
+  fstrim.timer reflector.timer caddy nftables tailscaled --no-pager
 /usr/local/bin/caddy version
 paru --version
-timedatectl   # should show America/Chicago
+timedatectl                                         # America/Chicago
 tailscale status
 ```
 
-**D5. BIOS fan unlock (not a script)**
+**D6. BIOS Smart Fan unlock (not a script)**
 
-Finish the Smart Fan curve for **CPU_FAN** in BIOS — [`bios_optimize.md`](bios_optimize.md). CoolerControl cannot take the header until that unlock is done.
+Reboot into BIOS and finish the **CPU_FAN** unlock curve — full table in [`bios_optimize.md`](bios_optimize.md) (Smart Fan 6). Without it, CoolerControl cannot take the AXP90 header (fans may sit ~40 %).
 
-**D6. Optional later (only if CPU_FAN needs it87)**
+After unlock, in GNOME: open **CoolerControl**, confirm **CPU_FAN** responds; never set CPU fan to 0 %.
+
+**D7. Optional — `it87` if CoolerControl still cannot drive CPU_FAN**
 
 ```bash
 sudo /opt/mjolnir/scripts/mjolnir-postinstall.sh --user laika --it87
+# reboot if the module did not load cleanly, then re-check CoolerControl
 ```
+
+**D8. Optional first-use**
+
+```bash
+# Pull a model (example — pick what fits 32 GB VRAM):
+ollama pull llama3.2
+ollama run llama3.2
+
+# Steam: launch from app grid → sign in → enable Proton in Settings → Steam Play
+```
+
+**Phase D done when:** Tailscale up, `https://ai.lehaus.io/api/tags` works on-tailnet, `nvidia-smi` OK, and (if you care about CPU fan control) BIOS unlock ± `it87` complete.
 
 ---
 
 ### Re-run postinstall only (system already installed)
 
-Use this if the base OS is already up and you only need the stack again. **Not** for first install from USB.
+Use this **only** if Arch is already installed and you need to re-apply the stack (or add `--it87`). **Not** for first install from USB — the full installer already ran postinstall.
 
 ```bash
 sudo /opt/mjolnir/scripts/mjolnir-postinstall.sh --user laika

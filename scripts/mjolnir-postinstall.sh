@@ -108,8 +108,8 @@ PKGS=(
   steam git openssh
   reflector chrony zram-generator
   ethtool
-  # paru-bin / xcaddy (custom Caddy binary + our own systemd unit)
-  base-devel go
+  # paru-bin / makepkg (xcaddy-bin is AUR; go is installed only when building Caddy)
+  base-devel
 )
 
 install_xcaddy_caddy() {
@@ -119,6 +119,7 @@ install_xcaddy_caddy() {
     echo "DRY-RUN: xcaddy build --with github.com/caddy-dns/cloudflare --output ${CADDY_BIN}"
     return 0
   fi
+  pacman -S --needed --noconfirm go
   # Prebuilt xcaddy helper (AUR)
   if ! command -v xcaddy >/dev/null; then
     sudo -u "$USER_NAME" paru -S --needed --noconfirm xcaddy-bin

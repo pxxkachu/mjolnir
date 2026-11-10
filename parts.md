@@ -57,10 +57,14 @@ Use this file as the hardware and software source of truth when writing guides o
 | Field | Value |
 |-------|-------|
 | Model | Gigabyte **B850I AORUS PRO** |
+| Revision | **1.0** |
 | Chipset | AMD B850 |
 | Form factor | Mini-ITX |
 | Socket | AM5 |
-| Storage | 1× M.2 NVMe |
+| LAN | Realtek **2.5GbE** |
+| Wi‑Fi / BT | Realtek **RTL8922AE** Wi‑Fi 7 + Bluetooth 5.4 |
+| Audio | Realtek **ALC4080** |
+| Storage | 2× M.2 NVMe (OS on 990 PRO) |
 
 **Install notes:** Disable **CSM/Legacy**; pure UEFI. **fTPM** on; Secure Boot via **sbctl** after Arch is stable. **Above 4G Decoding** + **Re-Size BAR**. Apply [`bios_optimize.md`](bios_optimize.md) before or right after OS install.
 
@@ -185,6 +189,8 @@ machine:
   repo: https://github.com/pxxkachu/mjolnir
   form_factor: mini-itx
   case: OpenITX custom
+  motherboard: Gigabyte B850I AORUS PRO
+  motherboard_rev: "1.0"
   boot: uefi
   bootloader: systemd-boot
   secure_boot: sbctl
@@ -227,6 +233,20 @@ storage:
   efi_gb: 1
   root_gb: ~100
   home: remainder_models_and_games
+  motherboard: Gigabyte B850I AORUS PRO
+  motherboard_rev: "1.0"
+  firmware:
+    - amd-ucode                 # 9800X3D microcode
+    - linux-firmware-nvidia     # RTX 5090
+    - linux-firmware-realtek    # Rev 1.0: 2.5G LAN + RTL8922AE Wi‑Fi/BT + ALC4080
+    not:
+      - linux-firmware          # meta → intel/broadcom/atheros/…
+      - linux-firmware-intel
+      - linux-firmware-mediatek # not on this Rev 1.0 (Realtek Wi‑Fi)
+      - linux-firmware-amdgpu   # 9800X3D has no iGPU
+      - linux-firmware-radeon
+      - linux-firmware-amd      # SEV/NPU — not used here
+      - linux-firmware-other
 
 os:
   name: Arch Linux

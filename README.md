@@ -15,7 +15,7 @@ Mini-ITX gaming and homelab workstation in a custom **OpenITX** case. **Arch Lin
 | **Case** | **OpenITX** (custom) | Mini-ITX SFF |
 | **CPU** | AMD Ryzen 7 **9800X3D** | PBO Advanced, CO **−35** |
 | **GPU** | NVIDIA RTX **5090** HP OMEN OEM (32 GB) | Fit **confirmed** · `nvidia-open` + Ollama |
-| **Board** | Gigabyte **B850I AORUS PRO** | UEFI, Secure Boot (sbctl), fTPM |
+| **Board** | Gigabyte **B850I AORUS PRO** **Rev 1.0** | Realtek 2.5G + RTL8922AE Wi‑Fi 7 · UEFI / fTPM |
 | **RAM** | G.Skill Ripjaws S5 2×48 GB | **6000 CL30-36-36-30** — BIOS **done** *(kit XMP 6800 failed)* |
 | **Storage** | Samsung **990 PRO** 2 TB PCIe Gen4 NVMe M.2 | `/dev/nvme0n1` · GPT ext4 · Arch only |
 | **Cooler** | Thermalright **AXP90-X47** | Low-profile top-down |
@@ -43,14 +43,14 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 
 ```
 1. BIOS            →  bios_optimize.md
-2. Arch live ISO   →  scripts/mjolnir-install.sh --disk /dev/nvme0n1 --user laika --confirm-wipe
-3. Reboot          →  GDM → GNOME → tailscale up
+2. Arch live ISO   →  bash scripts/mjolnir-install.sh   # defaults: nvme0n1 + laika + wipe; runs postinstall
+3. Reboot          →  GDM → GNOME → tailscale up → Caddy token
 ```
 
 | Step | Doc / script | What you do |
 |------|--------------|-------------|
 | **1. BIOS** | [`bios_optimize.md`](bios_optimize.md) | Boot / CPU / GPU / Smart Fan unlock *(memory already done)* |
-| **2. Full install** | [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) | Wipe → pacstrap → bootloader → stack + **paru-bin** (optional `--it87`) |
+| **2. Full install** | [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) | One script: wipe → pacstrap → **auto postinstall** (do not run postinstall separately) |
 | **3. Verify** | [`arch_install.md`](arch_install.md) | `nvidia-smi`, Tailscale API, CoolerControl, Proton |
 
 **How to run** (step-by-step commands, reboot, chroot notes): [`arch_install.md` — Step-by-step install](arch_install.md#step-by-step-install-follow-in-order)

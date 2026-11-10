@@ -2,7 +2,7 @@
 
 **Entry point:** [`README.md`](README.md)
 
-**Board:** Gigabyte **B850I AORUS PRO** · **CPU:** Ryzen 7 **9800X3D** · **RAM:** G.Skill 2×48 GB @ **6000 CL30** *(stable; kit XMP 6800)* · **Storage:** Samsung **990 PRO** 2 TB PCIe Gen4 NVMe M.2 · **OS:** **Arch Linux** only
+**Board:** Gigabyte **B850I AORUS PRO Rev 1.0** · **CPU:** Ryzen 7 **9800X3D** · **RAM:** G.Skill 2×48 GB @ **6000 CL30** *(stable; kit XMP 6800)* · **Storage:** Samsung **990 PRO** 2 TB PCIe Gen4 NVMe M.2 · **OS:** **Arch Linux** only
 
 Apply after **Load Optimized Defaults** + latest stable BIOS flash. DIMMs in **A2 + B2** only. OS side: **`nvidia-open`**, GNOME, Ollama — see [`arch_install.md`](arch_install.md).
 
