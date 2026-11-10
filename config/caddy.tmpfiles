@@ -1,3 +1,0 @@
-d /var/lib/caddy 0750 caddy caddy -
-Z /var/lib/caddy/Caddyfile 0640 caddy caddy -
-z /var/lib/caddy/porkbun.env 0600 caddy caddy -
