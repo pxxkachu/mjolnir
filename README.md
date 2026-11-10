@@ -79,7 +79,7 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 
 **Fans:** No case fans. **CoolerControl** on **CPU_FAN** (+ GPU); BIOS unlock for CPU header only
 
-**AI ops:** **`https://ai.lehaus.io`** via **xcaddy** (Cloudflare DNS-01; **not** stock `caddy` / certbot) → `llama-server` on `127.0.0.1:8080` · Tailscale-only nftables · sleep **masked** · chrony + fstrim · **America/Chicago** · US mirrors (reflector)
+**AI ops:** **`https://ai.lehaus.io`** via **xcaddy** (Porkbun DNS-01, same as dxp480tp; **not** stock `caddy` / certbot) → `llama-server` on `127.0.0.1:8080` · Tailscale-only nftables · sleep **masked** · **America/Chicago**
 
 HTTPS details → [`arch_install.md` — HTTPS: ai.lehaus.io (xcaddy)](arch_install.md#https-ailehausio-xcaddy)
 

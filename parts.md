@@ -266,7 +266,7 @@ network:
   tailscale: required
   llama_bind: "127.0.0.1:8080"
   llama_api: "https://ai.lehaus.io"
-  caddy: xcaddy_cloudflare_dns
+  caddy: xcaddy_porkbun_dns
   caddy_bin: /usr/local/bin/caddy
   caddy_unit: config/caddy.service
   caddy_domain: ai.lehaus.io

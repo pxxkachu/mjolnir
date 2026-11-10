@@ -10,7 +10,7 @@ Hardware: [`parts.md`](parts.md) · BIOS: [`bios_optimize.md`](bios_optimize.md)
 
 **Packages:** prefer **official Arch repo binaries** (`pacman`) for the stack. **`paru-bin`** is installed by default. Use **`nvidia-open`** (prebuilt modules), not `nvidia-open-dkms`.
 
-**HTTPS (chosen approach):** **`xcaddy-bin`** builds a custom Caddy with the **Cloudflare DNS** plugin → **`/usr/local/bin/caddy`**, plus our own **`caddy.service` / sysuser**. We do **not** install the stock Arch `caddy` package and do **not** use certbot/lego. Optional **`--it87`**. Skip HTTPS with **`--no-caddy`**.
+**HTTPS (chosen approach):** **`xcaddy-bin`** builds a custom Caddy with the **Porkbun DNS** plugin → **`/usr/local/bin/caddy`** (same as dxp480tp). We do **not** install the stock Arch `caddy` package and do **not** use certbot/lego. Optional **`--it87`**. Skip HTTPS with **`--no-caddy`**.
 
 ---
 
@@ -32,7 +32,7 @@ The installer calls `arch-chroot` **internally** to configure the new disk and r
 | Wipe, partition, pacstrap, bootloader | Flash USB, BIOS boot settings, boot live ISO |
 | Firmware, NVIDIA, GNOME/GDM | Set **`laika`** + **`root`** passwords when prompted |
 | `llama-cpp` + `ggml-cuda`, xcaddy, Tailscale, nftables, paru | `umount -R /mnt` → `reboot` → remove USB → GDM login |
-| Copies repo → `/opt/mjolnir` | **`tailscale up`**, Cloudflare **A** for `ai.lehaus.io`, **`CF_API_TOKEN`**, restart caddy |
+| Copies repo → `/opt/mjolnir` | **`tailscale up`**, Porkbun **A** for `ai.lehaus.io`, **Porkbun API keys**, restart caddy |
 | Enables services (caddy waits for token; llama-server waits for GGUF) | BIOS **Smart Fan** unlock; optional `--it87`; symlink GGUF → start `llama-server` |
 
 One command for the OS stack: `bash scripts/mjolnir-install.sh`. Do **not** also run postinstall on a fresh install. Full human checklist after the script: [Phase D](#phase-d--after-first-boot-you-do-these).
@@ -155,7 +155,7 @@ reboot
 1. Remove the USB stick so the machine boots from the **990 PRO** (systemd-boot).
 2. You should get **GDM** → log in as **`laika`** with the password you set above (GNOME Wayland).
 3. If the screen is black: switch to a TTY with `Ctrl+Alt+F3`, log in as `laika` (or `root` if needed), run `nvidia-smi`, check [`Troubleshooting`](#troubleshooting).
-4. Continue with **[Phase D](#phase-d--after-first-boot-you-do-these)** — Tailscale, Cloudflare DNS, `CF_API_TOKEN`, checks, BIOS fan unlock.
+4. Continue with **[Phase D](#phase-d--after-first-boot-you-do-these)** — Tailscale, Porkbun DNS, API keys, checks, BIOS fan unlock.
 
 You are **not** in the live ISO anymore. You are **not** in a chroot. This is the real installed system. The OS stack is already installed; Phase D is only the remaining hand-finished items.
 
@@ -165,16 +165,16 @@ You are **not** in the live ISO anymore. You are **not** in a chroot. This is th
 
 Open **Console** (or any terminal) as `laika`. These steps are **not** automated — the installer prints the same list at `FULL INSTALL COMPLETE`.
 
-**llama-server** listens on **`127.0.0.1:8080` only** (OpenAI-compatible `/v1`). Clients use **`https://ai.lehaus.io`** on the tailnet. TLS is terminated by **xcaddy-built Caddy** (Cloudflare DNS-01). **nftables** drops WAN inbound and allows **`tailscale0`** (+ loopback). Architecture: [HTTPS: ai.lehaus.io (xcaddy)](#https-ailehausio-xcaddy).
+**llama-server** listens on **`127.0.0.1:8080` only** (OpenAI-compatible `/v1`). Clients use **`https://ai.lehaus.io`** on the tailnet. TLS is terminated by **xcaddy-built Caddy** (Porkbun DNS-01, same as dxp480tp). **nftables** drops WAN inbound and allows **`tailscale0`** (+ loopback). Architecture: [HTTPS: ai.lehaus.io (xcaddy)](#https-ailehausio-xcaddy).
 
 **Checklist (do in order)**
 
 | # | Step | Done when |
 |---|------|-----------|
 | D1 | Join Tailscale | `tailscale ip -4` shows `100.x` |
-| D2 | Cloudflare DNS `ai` → that IP (grey cloud) | Record resolves to Tailscale IP |
-| D3 | Cloudflare API token with Zone:Read + DNS:Edit | Token created |
-| D4 | Set `CF_API_TOKEN` in `/etc/caddy/caddy.env`, restart caddy | Caddy active (cert OK) |
+| D2 | Porkbun DNS `ai` → that IP | Record resolves to Tailscale IP |
+| D3 | Porkbun API key + secret (API Access enabled for `lehaus.io`) | Keys saved |
+| D4 | Set keys in `/var/lib/caddy/porkbun.env`, restart caddy | Caddy active (cert OK) |
 | D5 | Drop a GGUF + start `llama-server` | `curl https://ai.lehaus.io/v1/models` OK |
 | D6 | Verify GPU / services | `nvidia-smi` + units healthy |
 | D7 | BIOS Smart Fan unlock for **CPU_FAN** | CoolerControl can drive the header |
@@ -193,38 +193,47 @@ tailscale ip -4
 
 (Installer uses `--no-tailscale-up` in chroot, so this never ran during Phase C.)
 
-**D2. Point `ai.lehaus.io` at this machine (Cloudflare DNS)**
+**D2. Point `ai.lehaus.io` at this machine (Porkbun DNS)**
 
-1. Cloudflare → **lehaus.io** → DNS → Add record:
-   - **Type:** `A` (and `AAAA` if you use Tailscale IPv6)
-   - **Name:** `ai`
-   - **IPv4 / IPv6:** output of `tailscale ip -4` / `tailscale ip -6`
-   - **Proxy status:** **DNS only** (grey cloud — **not** proxied / orange cloud)
-2. Confirm from this box or another tailnet device: `getent hosts ai.lehaus.io` → Tailscale IP
+Same as dxp480tp DNS step — in [Porkbun](https://porkbun.com/) for **`lehaus.io`**:
 
-**D3. Create a Cloudflare API token**
+| Type | Host | Answer | TTL |
+|------|------|--------|-----|
+| A | `ai` | output of `tailscale ip -4` | 600 |
 
-1. https://dash.cloudflare.com/profile/api-tokens → **Create Token**
-2. Permissions: **Zone → Zone:Read** + **Zone → DNS:Edit** for zone **`lehaus.io`**
-3. Copy the token once (needed in D4)
+Optional AAAA with `tailscale ip -6`. Confirm: `getent hosts ai.lehaus.io` → Tailscale IP.
 
-**D4. Give xcaddy-Caddy the token and start HTTPS**
+**D3. Enable Porkbun API access**
+
+1. Porkbun → **Details** for `lehaus.io` → enable **API Access**
+2. **Account** → **API Access** → create a key (e.g. `caddy-mjolnir`)
+3. Save **API key** + **secret key**
+
+**D4. Give xcaddy-Caddy the Porkbun keys and start HTTPS**
+
+Same layout as **dxp480tp** (`/var/lib/caddy` + xcaddy custom binary — not stock Arch `caddy`):
 
 ```bash
-# Confirm xcaddy binary (not stock /usr/bin/caddy):
+# Confirm xcaddy binary (not /usr/bin/caddy):
 /usr/local/bin/caddy version
-systemctl cat caddy | grep ExecStart=
-# expect: ExecStart=/usr/local/bin/caddy run ...
+/usr/local/bin/caddy list-modules | grep -i porkbun
+systemctl cat caddy | grep -E 'ExecStart=|EnvironmentFile='
+# expect: ExecStart=/usr/local/bin/caddy run --environ --config /var/lib/caddy/Caddyfile
+# expect: EnvironmentFile=/var/lib/caddy/porkbun.env
 
-sudoedit /etc/caddy/caddy.env
-# set exactly one line (mode 600):
-#   CF_API_TOKEN=your_token_here
+sudoedit /var/lib/caddy/porkbun.env
+# PORKBUN_API_KEY=pk1_...
+# PORKBUN_SECRET_API_KEY=sk1_...
+# file owned by caddy, mode 600
 
+sudo systemctl daemon-reload
 sudo systemctl restart caddy
 sudo systemctl status caddy --no-pager
+ss -tlnp | grep caddy
 ```
 
-If cert/TLS fails: wait for DNS to propagate, re-check grey-cloud A record, `journalctl -u caddy -e`.
+If cert/TLS fails: wait for DNS to propagate, re-check Porkbun A record, `journalctl -u caddy -e`.  
+Rebuild later (as `laika`, not root): `/usr/local/lib/mjolnir/rebuild-caddy.sh`
 
 **D5. GGUF model + start llama-server**
 
@@ -392,21 +401,22 @@ Stock thermals first; if SF1000 trips under LLM: `nvidia-smi -pl 450`. UV TBD �
 
 ## HTTPS: ai.lehaus.io (xcaddy)
 
-**Decision:** use **xcaddy**, not stock Arch `caddy` and not certbot/lego.
+**Decision:** use **xcaddy** + **Porkbun** DNS-01 — same as [`../dxp480tp/post_install.md`](../dxp480tp/post_install.md) §14. Not stock Arch `caddy`; not certbot/lego; not Cloudflare.
 
 | Piece | Value |
 |-------|--------|
-| Build tool | **`xcaddy-bin`** (AUR, via paru) |
-| Plugins | `github.com/caddy-dns/cloudflare` (DNS-01 for Let’s Encrypt) |
-| Binary | **`/usr/local/bin/caddy`** (only Caddy on the system) |
-| Unit / user | [`config/caddy.service`](config/caddy.service), [`config/caddy.sysusers`](config/caddy.sysusers), [`config/caddy.tmpfiles`](config/caddy.tmpfiles) |
-| Site config | [`config/Caddyfile`](config/Caddyfile) → `ai.lehaus.io` → `127.0.0.1:8080` (`llama-server`) |
-| Secrets | `/etc/caddy/caddy.env` → `CF_API_TOKEN=…` |
-| DNS | Cloudflare **A** `ai` → Tailscale `100.x` · **DNS only** (grey cloud) |
-| Access | Tailnet only (`nftables` + `tailscale0`) |
-| Upgrades | `/usr/local/lib/mjolnir/rebuild-caddy.sh` |
+| Build | As login user: `xcaddy build --with github.com/caddy-dns/porkbun --output /tmp/caddy` → `/usr/local/bin/caddy` (fallback pin **v2.9.1**) |
+| Tool | **`xcaddy-bin`** via paru |
+| Binary | **`/usr/local/bin/caddy`** — verify: `caddy list-modules \| grep -i porkbun` |
+| Unit | [`config/caddy.service`](config/caddy.service) — `AmbientCapabilities=CAP_NET_BIND_SERVICE`; **no** `NoNewPrivileges` |
+| Config dir | **`/var/lib/caddy/`** — `Caddyfile` + `porkbun.env` |
+| Site | [`config/Caddyfile`](config/Caddyfile) — global `acme_dns porkbun` + `(tailnet)` ACL → `127.0.0.1:8080` |
+| Secrets | `/var/lib/caddy/porkbun.env` → `PORKBUN_API_KEY` + `PORKBUN_SECRET_API_KEY` |
+| DNS | Porkbun **A** `ai` → Tailscale `100.x` |
+| Access | `(tailnet)` snippet + **nftables** (`tailscale0`) |
+| Upgrades | `/usr/local/lib/mjolnir/rebuild-caddy.sh` (run as `laika`) |
 
-Why not stock Caddy alone? Auto-HTTPS uses HTTP-01 and needs a public `:80`. A Tailscale-only `100.x` name cannot complete that challenge. DNS-01 inside Caddy needs the Cloudflare plugin → **xcaddy**.
+Why not stock Caddy? HTTP-01 needs public `:80`. Tailscale `100.x` needs DNS-01 → Porkbun plugin → **xcaddy**.
 
 ---
 
@@ -437,7 +447,7 @@ Prefer DisplayPort. Set refresh / VRR in **Settings → Displays**. OLED: blank 
 Open frame — only **AXP90 on CPU_FAN** + GPU axial fans. BIOS unlock for **CPU_FAN** — [`bios_optimize.md`](bios_optimize.md). CoolerControl: CPU package → CPU_FAN; never 0 % CPU fan. GPU: OEM/NVIDIA curve (or CoolerControl NVML).
 
 ```bash
-# default (repo stack + paru-bin + xcaddy → Caddy w/ Cloudflare DNS):
+# default (repo stack + paru-bin + xcaddy → Caddy w/ Porkbun DNS):
 sudo ./scripts/mjolnir-postinstall.sh
 # Gigabyte ITE PWM for CPU_FAN (DKMS via paru):
 sudo ./scripts/mjolnir-postinstall.sh --it87
@@ -484,7 +494,7 @@ sbctl create-keys && sbctl enroll-keys -m
 | Bluetooth | `systemctl status bluetooth` active; Settings → Bluetooth |
 | llama-server GPU | Loaded model shows process in nvidia-smi |
 | API locked down | Off-tailnet: **fails**; on tailnet: `curl https://ai.lehaus.io/v1/models` OK |
-| xcaddy Caddy | `systemctl status caddy` active; `ExecStart=/usr/local/bin/caddy`; cert after `CF_API_TOKEN` |
+| xcaddy Caddy | `systemctl status caddy` active; `/var/lib/caddy/Caddyfile`; Porkbun keys in `porkbun.env` |
 | TRIM | `systemctl status fstrim.timer` → enabled |
 | paru | `paru --version` |
 
@@ -497,8 +507,8 @@ sbctl create-keys && sbctl enroll-keys -m
 | No NVIDIA device | `nvidia-open`, modeset, `journalctl -b` |
 | GNOME / GDM black screen | Fix NVIDIA DRM; `nvidia-smi` in TTY; try GNOME on Xorg once from GDM gear menu |
 | llama-server on CPU only | Confirm `ggml-cuda` installed; `-ngl 99`; persistenced + reboot |
-| API reachable from WAN | Check nftables (only `tailscale0`); DNS **grey cloud** |
-| Caddy cert / TLS fail | `CF_API_TOKEN` in `/etc/caddy/caddy.env`; DNS A → Tailscale IP; `journalctl -u caddy` |
+| API reachable from WAN | Check nftables (only `tailscale0`); Porkbun A → Tailscale IP only |
+| Caddy cert / TLS fail | Porkbun keys in `/var/lib/caddy/porkbun.env`; DNS A → Tailscale IP; `journalctl -u caddy` |
 | PSU trip under LLM | `nvidia-smi -pl 450` (tune); check 12V-2x6 seat |
 | Fans stuck ~40 % | `coolercontrold` + `it87`; BIOS unlock curve |
 | Suspend broke GPU | Sleep targets should be masked — do not unmask |

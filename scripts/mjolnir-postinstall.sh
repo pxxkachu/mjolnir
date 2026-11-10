@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
 # Mjolnir post-install — official Arch repo packages + paru-bin (AUR helper binary).
 #
-# HTTPS for ai.lehaus.io (chosen approach — do NOT use stock caddy or certbot):
-#   1. paru installs xcaddy-bin
-#   2. xcaddy build --with github.com/caddy-dns/cloudflare → /usr/local/bin/caddy
-#   3. Install our systemd unit/sysuser/tmpfiles from config/caddy.*
-#   4. Caddyfile reverse_proxy → llama-server 127.0.0.1:8080; TLS via Cloudflare DNS-01
+# HTTPS for ai.lehaus.io — same xcaddy + Porkbun pattern as dxp480tp post_install.md §14:
+#   1. paru xcaddy-bin as login user (NOT sudo for the build)
+#   2. xcaddy build --with github.com/caddy-dns/porkbun → /tmp/caddy → /usr/local/bin/caddy
+#   3. Config + secrets under /var/lib/caddy (Caddyfile, porkbun.env)
+#   4. Official-style caddy.service (AmbientCapabilities; NO NoNewPrivileges)
+#   5. Caddyfile (tailnet) ACL + reverse_proxy → llama-server 127.0.0.1:8080
 #
-# AI stack: official Arch llama-cpp + ggml-cuda (not Ollama). No Steam/multilib.
-# Only --it87 triggers an extra DKMS compile (it87-dkms-git).
-#
-#   sudo ./scripts/mjolnir-postinstall.sh
-#   sudo ./scripts/mjolnir-postinstall.sh --user laika --it87
-#
+# AI: llama-cpp + ggml-cuda. Only --it87 triggers an extra DKMS compile.
 # Also invoked from mjolnir-install.sh inside arch-chroot (MJOLNIR_CHROOT=1).
 # See ../arch_install.md#https-ailehausio-xcaddy
 
@@ -42,7 +38,7 @@ Usage: sudo ./mjolnir-postinstall.sh [options]
   -h, --help          Show this help
 
 Default: llama-cpp + ggml-cuda + paru-bin + xcaddy → /usr/local/bin/caddy
-(Cloudflare DNS) for https://ai.lehaus.io. No Ollama, Steam, stock caddy, or certbot.
+(Porkbun DNS-01) for https://ai.lehaus.io. No Ollama, Steam, stock caddy, or certbot.
 EOF
 }
 
@@ -150,31 +146,35 @@ PKGS=(
 )
 
 install_xcaddy_caddy() {
-  echo "==> xcaddy: build Caddy with Cloudflare DNS for https://${CADDY_DOMAIN}"
+  # Mirrors dxp480tp: build as normal user → /tmp/caddy → install to /usr/local/bin/caddy
+  echo "==> xcaddy: build Caddy with Porkbun DNS for https://${CADDY_DOMAIN}"
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "DRY-RUN: paru -S xcaddy-bin"
-    echo "DRY-RUN: xcaddy build --with github.com/caddy-dns/cloudflare --output ${CADDY_BIN}"
+    echo "DRY-RUN: paru -S --needed xcaddy-bin   # as ${USER_NAME}, not sudo for build"
+    echo "DRY-RUN: xcaddy build --with github.com/caddy-dns/porkbun --output /tmp/caddy"
+    echo "DRY-RUN: install -m 755 /tmp/caddy ${CADDY_BIN}"
+    echo "DRY-RUN: caddy list-modules | grep -i porkbun"
     return 0
   fi
   pacman -S --needed --noconfirm go
-  # Prebuilt xcaddy helper (AUR)
   if ! command -v xcaddy >/dev/null; then
     sudo -u "$USER_NAME" paru -S --needed --noconfirm xcaddy-bin
   fi
-  local build_dir
-  build_dir="$(mktemp -d)"
-  # shellcheck disable=SC2064
-  trap "rm -rf '$build_dir'" RETURN
-  chmod -R a+rwX "$build_dir"
-  # Build as the login user (module cache in homedir)
-  sudo -u "$USER_NAME" bash -c "
+  # Build as login user (do NOT sudo xcaddy) — same as dxp480tp
+  sudo -u "$USER_NAME" bash -c '
     set -euo pipefail
-    cd '$build_dir'
-    xcaddy build --with github.com/caddy-dns/cloudflare --output '$build_dir/caddy'
-  "
+    rm -f /tmp/caddy
+    if ! xcaddy build --with github.com/caddy-dns/porkbun --output /tmp/caddy; then
+      echo "    xcaddy latest failed — pinning Caddy v2.9.1 (dxp480tp fallback)"
+      xcaddy build v2.9.1 --with github.com/caddy-dns/porkbun --output /tmp/caddy
+    fi
+  '
   install -d /usr/local/bin
-  install -m 755 "$build_dir/caddy" "$CADDY_BIN"
+  install -m 755 /tmp/caddy "$CADDY_BIN"
+  rm -f /tmp/caddy
   echo "    Installed ${CADDY_BIN} ($("$CADDY_BIN" version 2>/dev/null | head -n1 || true))"
+  "$CADDY_BIN" list-modules 2>/dev/null | grep -qi porkbun \
+    && echo "    porkbun DNS module OK" \
+    || echo "    WARN: porkbun module not listed — rebuild with rebuild-caddy.sh"
 }
 
 install_paru_bin() {
@@ -334,37 +334,46 @@ fi
 if [[ "$SKIP_CADDY" -eq 0 ]]; then
   install_xcaddy_caddy
 
-  echo "==> Caddy systemd unit + sysuser (no stock caddy package)"
-  install -d /etc/caddy /var/lib/caddy /var/log/caddy /usr/lib/sysusers.d /usr/lib/tmpfiles.d
+  echo "==> Caddy under /var/lib/caddy (dxp480tp layout; no stock caddy package)"
+  install -d /var/lib/caddy /usr/lib/sysusers.d /usr/lib/tmpfiles.d
   install -m 644 "$REPO_ROOT/config/caddy.sysusers" /usr/lib/sysusers.d/caddy.conf
   install -m 644 "$REPO_ROOT/config/caddy.tmpfiles" /usr/lib/tmpfiles.d/caddy.conf
   install -m 644 "$REPO_ROOT/config/caddy.service" /etc/systemd/system/caddy.service
-  if [[ -f "$REPO_ROOT/config/Caddyfile" ]]; then
-    install -m 644 "$REPO_ROOT/config/Caddyfile" /etc/caddy/Caddyfile
-  fi
-  if [[ ! -f /etc/caddy/caddy.env ]]; then
-    if [[ -f "$REPO_ROOT/config/caddy.env.example" ]]; then
-      install -m 600 "$REPO_ROOT/config/caddy.env.example" /etc/caddy/caddy.env
-    else
-      umask 077
-      printf 'CF_API_TOKEN=\n' >/etc/caddy/caddy.env
-    fi
-  fi
   systemd-sysusers caddy.conf || systemd-sysusers || true
   systemd-tmpfiles --create caddy.conf || systemd-tmpfiles --create || true
-  chown -R caddy:caddy /var/lib/caddy /var/log/caddy 2>/dev/null || true
 
-  # Rebuild helper for later Caddy upgrades
+  if [[ -f "$REPO_ROOT/config/Caddyfile" ]]; then
+    install -m 640 "$REPO_ROOT/config/Caddyfile" /var/lib/caddy/Caddyfile
+  fi
+  if [[ ! -f /var/lib/caddy/porkbun.env ]]; then
+    if [[ -f "$REPO_ROOT/config/porkbun.env.example" ]]; then
+      install -m 600 "$REPO_ROOT/config/porkbun.env.example" /var/lib/caddy/porkbun.env
+    else
+      umask 077
+      printf 'PORKBUN_API_KEY=\nPORKBUN_SECRET_API_KEY=\n' >/var/lib/caddy/porkbun.env
+    fi
+  fi
+  chown -R caddy:caddy /var/lib/caddy
+  chmod 750 /var/lib/caddy
+  chmod 640 /var/lib/caddy/Caddyfile 2>/dev/null || true
+  chmod 600 /var/lib/caddy/porkbun.env 2>/dev/null || true
+
+  # Rebuild helper — same build-as-user pattern as dxp480tp
   install -d /usr/local/lib/mjolnir
   cat >/usr/local/lib/mjolnir/rebuild-caddy.sh <<'REBUILD'
 #!/usr/bin/env bash
-# Rebuild /usr/local/bin/caddy with Cloudflare DNS (needs xcaddy + go on PATH).
+# Rebuild /usr/local/bin/caddy with Porkbun DNS (dxp480tp-style).
+# Run as your login user (not root) for the xcaddy step.
 set -euo pipefail
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
-cd "$tmp"
-xcaddy build --with github.com/caddy-dns/cloudflare --output "$tmp/caddy"
-sudo install -m 755 "$tmp/caddy" /usr/local/bin/caddy
+command -v xcaddy >/dev/null || { echo "install xcaddy-bin via paru first"; exit 1; }
+rm -f /tmp/caddy
+if ! xcaddy build --with github.com/caddy-dns/porkbun --output /tmp/caddy; then
+  echo "latest failed — trying Caddy v2.9.1"
+  xcaddy build v2.9.1 --with github.com/caddy-dns/porkbun --output /tmp/caddy
+fi
+sudo install -m 755 /tmp/caddy /usr/local/bin/caddy
+rm -f /tmp/caddy
+/usr/local/bin/caddy list-modules | grep -i porkbun
 sudo systemctl restart caddy
 /usr/local/bin/caddy version
 REBUILD
@@ -373,15 +382,17 @@ REBUILD
   systemctl daemon-reload || true
   systemctl enable caddy.service
   if [[ "$IN_CHROOT" != "1" ]]; then
-    if grep -qE '^CF_API_TOKEN=.+' /etc/caddy/caddy.env 2>/dev/null; then
+    if grep -qE '^PORKBUN_API_KEY=.+' /var/lib/caddy/porkbun.env 2>/dev/null \
+       && grep -qE '^PORKBUN_SECRET_API_KEY=.+' /var/lib/caddy/porkbun.env 2>/dev/null; then
       systemctl restart caddy.service || systemctl start caddy.service || true
     else
-      echo "    CF_API_TOKEN empty — set /etc/caddy/caddy.env then: systemctl start caddy"
+      echo "    Porkbun keys empty — set /var/lib/caddy/porkbun.env then: systemctl start caddy"
     fi
   fi
   echo "    binary: ${CADDY_BIN}  unit: /etc/systemd/system/caddy.service"
-  echo "    DNS: A/AAAA ${CADDY_DOMAIN} → \$(tailscale ip -4)  (Cloudflare DNS only, grey cloud)"
-  echo "    Rebuild later: /usr/local/lib/mjolnir/rebuild-caddy.sh"
+  echo "    config: /var/lib/caddy/Caddyfile  secrets: /var/lib/caddy/porkbun.env"
+  echo "    DNS: A/AAAA ${CADDY_DOMAIN} → \$(tailscale ip -4)  (Porkbun)"
+  echo "    Rebuild later (as ${USER_NAME}): /usr/local/lib/mjolnir/rebuild-caddy.sh"
 else
   echo "==> Skipping xcaddy/Caddy (--no-caddy)"
 fi
@@ -411,7 +422,7 @@ if [[ "$IN_CHROOT" == "1" ]]; then
 else
   echo "    Reboot recommended. Then: nvidia-smi && tailscale up"
 fi
-echo "    HTTPS: set CF_API_TOKEN in /etc/caddy/caddy.env → systemctl restart caddy"
+echo "    HTTPS: set Porkbun keys in /var/lib/caddy/porkbun.env → systemctl restart caddy"
 echo "    Model: ln -sfn ~/models/<file>.gguf ~/models/active.gguf && sudo systemctl start llama-server"
 echo "    Clients: curl https://${CADDY_DOMAIN}/v1/models   (OpenAI-compatible)"
 echo "    BIOS Smart Fan unlock still required — bios_optimize.md"

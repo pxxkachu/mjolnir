@@ -85,7 +85,7 @@ Typical:
   bash scripts/mjolnir-install.sh
 
 Do NOT also run mjolnir-postinstall.sh for a fresh install — install runs it.
-After reboot: GDM → GNOME → tailscale up → set CF_API_TOKEN → restart caddy.
+After reboot: GDM → GNOME → tailscale up → set Porkbun keys → restart caddy.
 EOF
 }
 
@@ -389,9 +389,10 @@ echo "    umount -R /mnt"
 echo "    reboot"
 echo "    Remove USB → boot systemd-boot → GDM → GNOME"
 echo "    Then: tailscale up"
-echo "          Point DNS A ai.lehaus.io → \$(tailscale ip -4)  (Cloudflare DNS only)"
-echo "          sudoedit /etc/caddy/caddy.env   # CF_API_TOKEN=..."
-echo "          /usr/local/bin/caddy version    # xcaddy build (not stock /usr/bin/caddy)"
+echo "          Point DNS A ai.lehaus.io → \$(tailscale ip -4)  (Porkbun)"
+echo "          sudoedit /var/lib/caddy/porkbun.env   # PORKBUN_API_KEY + SECRET"
+echo "          /usr/local/bin/caddy version          # xcaddy build (not stock)"
+echo "          /usr/local/bin/caddy list-modules | grep -i porkbun"
 echo "          sudo systemctl restart caddy"
 echo "          ln -sfn ~/models/<file>.gguf ~/models/active.gguf && sudo systemctl start llama-server"
 echo "          curl https://ai.lehaus.io/v1/models"

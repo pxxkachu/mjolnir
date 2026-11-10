@@ -1,53 +1,31 @@
-# Mjolnir — Caddy built with xcaddy (Cloudflare DNS) at /usr/local/bin/caddy
-# Serves https://ai.lehaus.io → llama-server on 127.0.0.1:8080
+# Mjolnir — xcaddy-built Caddy (Porkbun DNS-01)
+# Pattern matches dxp480tp post_install.md §14 (official Caddy unit).
+# Do NOT set NoNewPrivileges=true — it breaks binding :443.
+# Serves https://ai.lehaus.io → llama-server 127.0.0.1:8080
 
 [Unit]
-Description=Caddy web server (xcaddy + Cloudflare DNS)
+Description=Caddy
 Documentation=https://caddyserver.com/docs/
-After=network-online.target tailscaled.service
-Wants=network-online.target tailscaled.service
-StartLimitIntervalSec=14400
-StartLimitBurst=10
+After=network-online.target
+Requires=network-online.target
 
 [Service]
 Type=notify
 User=caddy
 Group=caddy
-Environment=XDG_DATA_HOME=/var/lib
-Environment=XDG_CONFIG_HOME=/etc
-EnvironmentFile=-/etc/caddy/caddy.env
-ExecStartPre=/usr/local/bin/caddy validate --config /etc/caddy/Caddyfile
-ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
-ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
-ExecStopPost=/usr/bin/rm -f /run/caddy/admin.sock
-Restart=on-abnormal
+Environment=HOME=/var/lib/caddy
+Environment=XDG_CONFIG_HOME=/var/lib/caddy
+EnvironmentFile=/var/lib/caddy/porkbun.env
+ExecStart=/usr/local/bin/caddy run --environ --config /var/lib/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /var/lib/caddy/Caddyfile --force
 TimeoutStopSec=5s
 LimitNOFILE=1048576
-LimitNPROC=512
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-DevicePolicy=closed
-LockPersonality=true
-MemoryAccounting=true
-MemoryDenyWriteExecute=true
-NoNewPrivileges=true
-PrivateDevices=true
-PrivateTmp=true
-ProcSubset=pid
-ProtectClock=true
-ProtectControlGroups=true
 ProtectHome=true
-ProtectHostname=true
-ProtectKernelLogs=true
-ProtectKernelModules=true
-ProtectKernelTunables=true
-ProtectProc=invisible
 ProtectSystem=strict
-RemoveIPC=true
-ReadWritePaths=/var/lib/caddy /var/log/caddy /run/caddy
-RestrictNamespaces=true
-RestrictRealtime=true
-RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/caddy
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

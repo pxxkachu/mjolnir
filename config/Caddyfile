@@ -1,26 +1,26 @@
-# Mjolnir — HTTPS front for llama-server on Tailscale
-# Domain: ai.lehaus.io  →  reverse_proxy 127.0.0.1:8080
-#
-# Chosen stack: xcaddy-built /usr/local/bin/caddy + Cloudflare DNS plugin
-#   (NOT the stock Arch caddy package; NOT certbot/lego)
-# Requires: CF_API_TOKEN in /etc/caddy/caddy.env
-# DNS: A/AAAA ai.lehaus.io → Tailscale 100.x (Cloudflare DNS only / grey cloud)
-# Access: tailnet only — see config/nftables.conf
-# Unit: config/caddy.service → /usr/local/bin/caddy
-
+# Mjolnir — HTTPS for llama-server on Tailscale
+# Same xcaddy / Porkbun pattern as dxp480tp post_install.md §14
+# DNS: A ai.lehaus.io → Tailscale 100.x (Porkbun)
+# Plugin: github.com/caddy-dns/porkbun → /usr/local/bin/caddy
 
 {
 	email admin@lehaus.io
+	acme_dns porkbun {
+		api_key {env.PORKBUN_API_KEY}
+		api_secret_key {env.PORKBUN_SECRET_API_KEY}
+	}
+}
+
+(tailnet) {
+	@blocked not remote_ip 100.64.0.0/10
+	respond @blocked "Unauthorized" 403
+	tls {
+		resolvers 1.1.1.1
+	}
 }
 
 ai.lehaus.io {
-	tls {
-		dns cloudflare {env.CF_API_TOKEN}
-		resolvers 1.1.1.1
-	}
-
+	import tailnet
 	encode gzip
-
-	# llama-server (OpenAI-compatible /v1 + WebUI); local only; Caddy terminates TLS
 	reverse_proxy 127.0.0.1:8080
 }

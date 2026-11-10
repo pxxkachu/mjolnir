@@ -116,7 +116,7 @@ head -n1 "$INSTALL" | grep -q 'env bash' && record PASS "install shebang" || rec
 head -n1 "$POST" | grep -q 'env bash' && record PASS "postinstall shebang" || record FAIL "postinstall shebang"
 
 # config assets required by postinstall
-for f in Caddyfile caddy.service caddy.sysusers caddy.tmpfiles caddy.env.example nftables.conf; do
+for f in Caddyfile caddy.service caddy.sysusers caddy.tmpfiles porkbun.env.example nftables.conf; do
   if [[ -f "$REPO_ROOT/config/$f" ]]; then
     record PASS "config/$f exists"
   else
@@ -312,8 +312,16 @@ awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*openssh\s*$' && record PASS "PKGS
 awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*nftables\s*$' && record PASS "PKGS has nftables" || record FAIL "PKGS has nftables"
 awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*(ollama|ollama-cuda|steam|vulkan-tools|gamemode|fwupd)\s*$' \
   && record FAIL "PKGS still has deferred pkgs" || record PASS "PKGS no deferred pkgs"
-grep -q 'cloudflare' "$REPO_ROOT/config/Caddyfile" && record PASS "Caddyfile cloudflare dns" || record FAIL "Caddyfile cloudflare dns"
+grep -q 'porkbun' "$REPO_ROOT/config/Caddyfile" && record PASS "Caddyfile porkbun dns" || record FAIL "Caddyfile porkbun dns"
+grep -q 'acme_dns porkbun' "$REPO_ROOT/config/Caddyfile" && record PASS "Caddyfile acme_dns porkbun" || record FAIL "Caddyfile acme_dns porkbun"
+grep -q 'remote_ip 100.64.0.0/10' "$REPO_ROOT/config/Caddyfile" && record PASS "Caddyfile tailnet ACL" || record FAIL "Caddyfile tailnet ACL"
 grep -q '/usr/local/bin/caddy' "$REPO_ROOT/config/caddy.service" && record PASS "caddy.service uses xcaddy binary" || record FAIL "caddy.service binary path"
+grep -q '/var/lib/caddy/Caddyfile' "$REPO_ROOT/config/caddy.service" && record PASS "caddy.service /var/lib/caddy config" || record FAIL "caddy.service /var/lib/caddy config"
+grep -q 'porkbun.env' "$REPO_ROOT/config/caddy.service" && record PASS "caddy.service porkbun.env" || record FAIL "caddy.service porkbun.env"
+grep -qi cloudflare "$REPO_ROOT/config/Caddyfile" "$REPO_ROOT/config/caddy.service" \
+  && record FAIL "caddy still references cloudflare" || record PASS "caddy no cloudflare"
+grep -qE '^NoNewPrivileges=true' "$REPO_ROOT/config/caddy.service" \
+  && record FAIL "caddy.service must not set NoNewPrivileges" || record PASS "caddy.service no NoNewPrivileges"
 
 grep -q 'tailscale0' "$REPO_ROOT/config/nftables.conf" && record PASS "nftables tailscale0" || record FAIL "nftables tailscale0"
 
