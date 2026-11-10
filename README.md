@@ -33,7 +33,7 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 |-------|--------|
 | **OS** | Arch Linux (sole OS) |
 | **Desktop** | **GNOME** minimal (Wayland) + GDM |
-| **AI** | Ollama + CUDA · Tailscale-only API · no sleep · `nvidia-persistenced` |
+| **AI** | Ollama + CUDA · **xcaddy** `/usr/local/bin/caddy` → `https://ai.lehaus.io` (Tailscale) · no sleep · `nvidia-persistenced` |
 | **Gaming** | Steam + Proton |
 | **Fans** | CoolerControl for CPU/GPU (no case fans; optional `it87`) |
 
@@ -79,7 +79,9 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 
 **Fans:** No case fans. **CoolerControl** on **CPU_FAN** (+ GPU); BIOS unlock for CPU header only
 
-**AI ops:** Ollama bound to **Tailscale IP** (or nftables) · sleep targets **masked** · chrony + fstrim.timer · **America/Chicago** · US mirrors via reflector (rate-sorted, permanent)
+**AI ops:** **`https://ai.lehaus.io`** via **xcaddy** (Cloudflare DNS-01; **not** stock `caddy` / certbot) → Ollama on localhost · Tailscale-only nftables · sleep **masked** · chrony + fstrim · **America/Chicago** · US mirrors (reflector)
+
+HTTPS details → [`arch_install.md` — HTTPS: ai.lehaus.io (xcaddy)](arch_install.md#https-ailehausio-xcaddy)
 
 ---
 
@@ -107,6 +109,7 @@ ram: 96GB @ 6000 CL30-36-36-30
 storage: Samsung 990 PRO 2TB PCIe Gen4 NVMe M.2 (/dev/nvme0n1)
 aur_helper: paru-bin
 repo: https://github.com/pxxkachu/mjolnir
+ollama_api: https://ai.lehaus.io
 workloads:
   - local_ai_server_ollama
   - steam_gaming

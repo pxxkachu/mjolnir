@@ -1,21 +1,33 @@
 #!/usr/bin/env bash
 # Mjolnir post-install — official Arch repo packages + paru-bin (AUR helper binary).
-# Stack stays pacman binaries; paru is installed by default for optional AUR later.
-# Only --it87 triggers a local DKMS compile (it87-dkms-git).
+#
+# HTTPS for ai.lehaus.io (chosen approach — do NOT use stock caddy or certbot):
+#   1. paru installs xcaddy-bin
+#   2. xcaddy build --with github.com/caddy-dns/cloudflare → /usr/local/bin/caddy
+#   3. Install our systemd unit/sysuser/tmpfiles from config/caddy.*
+#   4. Caddyfile reverse_proxy → Ollama 127.0.0.1:11434; TLS via Cloudflare DNS-01
+#
+# Only --it87 triggers an extra DKMS compile (it87-dkms-git).
 #
 #   sudo ./scripts/mjolnir-postinstall.sh
-#   sudo ./scripts/mjolnir-postinstall.sh --user alice --it87
+#   sudo ./scripts/mjolnir-postinstall.sh --user laika --it87
 #
 # Also invoked from mjolnir-install.sh inside arch-chroot (MJOLNIR_CHROOT=1).
-# See ../arch_install.md
+# See ../arch_install.md#https-ailehausio-xcaddy
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 IT87=0
+SKIP_CADDY=0
 TAILSCALE_UP=1
 DRY_RUN=0
 USER_NAME="${SUDO_USER:-}"
 IN_CHROOT="${MJOLNIR_CHROOT:-0}"
+CADDY_DOMAIN="ai.lehaus.io"
+CADDY_BIN="/usr/local/bin/caddy"
 
 usage() {
   cat <<'EOF'
@@ -23,11 +35,13 @@ Usage: sudo ./mjolnir-postinstall.sh [options]
 
   --user NAME         Target login user (required in chroot / if not via sudo)
   --it87              Install it87-dkms-git via paru (DKMS compile)
+  --no-caddy          Skip xcaddy / ai.lehaus.io HTTPS front
   --no-tailscale-up   Install Tailscale but skip interactive `tailscale up`
   --dry-run           Print the plan; make no changes (no root required)
   -h, --help          Show this help
 
-Default: official repo binaries + paru-bin. Only --it87 compiles a kernel module.
+Default: repo binaries + paru-bin + xcaddy → /usr/local/bin/caddy (Cloudflare DNS)
+for https://ai.lehaus.io. No stock caddy package; no certbot/lego.
 EOF
 }
 
@@ -35,6 +49,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --user) USER_NAME="${2:?}"; shift 2 ;;
     --it87) IT87=1; shift ;;
+    --no-caddy) SKIP_CADDY=1; shift ;;
     --no-tailscale-up) TAILSCALE_UP=0; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -93,9 +108,36 @@ PKGS=(
   steam git openssh
   reflector chrony zram-generator
   ethtool
-  # paru-bin needs these to build the AUR PKGBUILD (paru itself is a binary package)
-  base-devel
+  # paru-bin / xcaddy (custom Caddy binary + our own systemd unit)
+  base-devel go
 )
+
+install_xcaddy_caddy() {
+  echo "==> xcaddy: build Caddy with Cloudflare DNS for https://${CADDY_DOMAIN}"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "DRY-RUN: paru -S xcaddy-bin"
+    echo "DRY-RUN: xcaddy build --with github.com/caddy-dns/cloudflare --output ${CADDY_BIN}"
+    return 0
+  fi
+  # Prebuilt xcaddy helper (AUR)
+  if ! command -v xcaddy >/dev/null; then
+    sudo -u "$USER_NAME" paru -S --needed --noconfirm xcaddy-bin
+  fi
+  local build_dir
+  build_dir="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$build_dir'" RETURN
+  chmod -R a+rwX "$build_dir"
+  # Build as the login user (module cache in homedir)
+  sudo -u "$USER_NAME" bash -c "
+    set -euo pipefail
+    cd '$build_dir'
+    xcaddy build --with github.com/caddy-dns/cloudflare --output '$build_dir/caddy'
+  "
+  install -d /usr/local/bin
+  install -m 755 "$build_dir/caddy" "$CADDY_BIN"
+  echo "    Installed ${CADDY_BIN} ($("$CADDY_BIN" version 2>/dev/null | head -n1 || true))"
+}
 
 install_paru_bin() {
   if command -v paru >/dev/null; then
@@ -132,7 +174,15 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   run systemctl enable reflector.timer reflector.service fstrim.timer chronyd.service coolercontrold.service gdm.service
   run systemctl enable nftables.service tailscaled.service ollama.service
   echo "DRY-RUN: enable GDM → GNOME Wayland session"
-  echo "DRY-RUN: write ollama.service.d/override.conf (127.0.0.1 or Tailscale IP)"
+  echo "DRY-RUN: write ollama.service.d/override.conf (OLLAMA_HOST=127.0.0.1:11434)"
+  echo "DRY-RUN: install nftables.conf (Tailscale-only input)"
+  if [[ "$SKIP_CADDY" -eq 0 ]]; then
+    install_xcaddy_caddy
+    echo "DRY-RUN: install config/caddy.{service,sysusers,tmpfiles} + Caddyfile"
+    run systemctl enable caddy.service
+  else
+    echo "DRY-RUN: skip xcaddy/Caddy (--no-caddy)"
+  fi
   if [[ "$IT87" -eq 1 ]]; then
     echo "DRY-RUN: --it87 would install it87-dkms-git via paru (COMPILE)"
     run pacman -S --needed --noconfirm linux-headers dkms
@@ -236,7 +286,12 @@ systemctl enable gdm.service
 systemctl set-default graphical.target || true
 # Prefer Wayland session (GNOME default on modern installs)
 
-echo "==> Tailscale + nftables"
+echo "==> Tailscale + nftables (Tailscale-only inbound)"
+if [[ -f "$REPO_ROOT/config/nftables.conf" ]]; then
+  install -m 644 "$REPO_ROOT/config/nftables.conf" /etc/nftables.conf
+else
+  echo "    WARN: missing $REPO_ROOT/config/nftables.conf"
+fi
 systemctl enable nftables.service tailscaled.service ollama.service
 if [[ "$IN_CHROOT" != "1" ]]; then
   systemctl start nftables.service tailscaled.service || true
@@ -247,32 +302,72 @@ if [[ "$TAILSCALE_UP" -eq 1 && "$IN_CHROOT" != "1" ]]; then
   sudo -u "$USER_NAME" tailscale up || tailscale up || true
 fi
 
-echo "==> Ollama override"
+echo "==> Ollama on 127.0.0.1:11434 (HTTPS via Caddy → ${CADDY_DOMAIN})"
 install -d /etc/systemd/system/ollama.service.d
-TS_IP=""
-if [[ "$IN_CHROOT" != "1" ]]; then
-  TS_IP="$(tailscale ip -4 2>/dev/null || true)"
-fi
-if [[ -n "$TS_IP" ]]; then
-  cat >/etc/systemd/system/ollama.service.d/override.conf <<EOF
+cat >/etc/systemd/system/ollama.service.d/override.conf <<'EOF'
 [Service]
-Environment="OLLAMA_HOST=${TS_IP}:11434"
-Environment="OLLAMA_KEEP_ALIVE=30m"
-EOF
-  echo "    Bound OLLAMA_HOST=${TS_IP}:11434"
-else
-  cat >/etc/systemd/system/ollama.service.d/override.conf <<'EOF'
-[Service]
-# After: tailscale up && systemctl daemon-reload && systemctl restart ollama
-# Prefer: Environment="OLLAMA_HOST=$(tailscale ip -4):11434"
+# Reachable on the tailnet as https://ai.lehaus.io (Caddy). Do not bind :11434 to WAN.
 Environment="OLLAMA_HOST=127.0.0.1:11434"
 Environment="OLLAMA_KEEP_ALIVE=30m"
 EOF
-  echo "    Ollama on 127.0.0.1 until Tailscale IP is set"
-fi
 systemctl daemon-reload || true
 if [[ "$IN_CHROOT" != "1" ]]; then
   systemctl restart ollama.service || systemctl start ollama.service || true
+fi
+
+if [[ "$SKIP_CADDY" -eq 0 ]]; then
+  install_xcaddy_caddy
+
+  echo "==> Caddy systemd unit + sysuser (no stock caddy package)"
+  install -d /etc/caddy /var/lib/caddy /var/log/caddy /usr/lib/sysusers.d /usr/lib/tmpfiles.d
+  install -m 644 "$REPO_ROOT/config/caddy.sysusers" /usr/lib/sysusers.d/caddy.conf
+  install -m 644 "$REPO_ROOT/config/caddy.tmpfiles" /usr/lib/tmpfiles.d/caddy.conf
+  install -m 644 "$REPO_ROOT/config/caddy.service" /etc/systemd/system/caddy.service
+  if [[ -f "$REPO_ROOT/config/Caddyfile" ]]; then
+    install -m 644 "$REPO_ROOT/config/Caddyfile" /etc/caddy/Caddyfile
+  fi
+  if [[ ! -f /etc/caddy/caddy.env ]]; then
+    if [[ -f "$REPO_ROOT/config/caddy.env.example" ]]; then
+      install -m 600 "$REPO_ROOT/config/caddy.env.example" /etc/caddy/caddy.env
+    else
+      umask 077
+      printf 'CF_API_TOKEN=\n' >/etc/caddy/caddy.env
+    fi
+  fi
+  systemd-sysusers caddy.conf || systemd-sysusers || true
+  systemd-tmpfiles --create caddy.conf || systemd-tmpfiles --create || true
+  chown -R caddy:caddy /var/lib/caddy /var/log/caddy 2>/dev/null || true
+
+  # Rebuild helper for later Caddy upgrades
+  install -d /usr/local/lib/mjolnir
+  cat >/usr/local/lib/mjolnir/rebuild-caddy.sh <<'REBUILD'
+#!/usr/bin/env bash
+# Rebuild /usr/local/bin/caddy with Cloudflare DNS (needs xcaddy + go on PATH).
+set -euo pipefail
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+cd "$tmp"
+xcaddy build --with github.com/caddy-dns/cloudflare --output "$tmp/caddy"
+sudo install -m 755 "$tmp/caddy" /usr/local/bin/caddy
+sudo systemctl restart caddy
+/usr/local/bin/caddy version
+REBUILD
+  chmod 755 /usr/local/lib/mjolnir/rebuild-caddy.sh
+
+  systemctl daemon-reload || true
+  systemctl enable caddy.service
+  if [[ "$IN_CHROOT" != "1" ]]; then
+    if grep -qE '^CF_API_TOKEN=.+' /etc/caddy/caddy.env 2>/dev/null; then
+      systemctl restart caddy.service || systemctl start caddy.service || true
+    else
+      echo "    CF_API_TOKEN empty — set /etc/caddy/caddy.env then: systemctl start caddy"
+    fi
+  fi
+  echo "    binary: ${CADDY_BIN}  unit: /etc/systemd/system/caddy.service"
+  echo "    DNS: A/AAAA ${CADDY_DOMAIN} → \$(tailscale ip -4)  (Cloudflare DNS only, grey cloud)"
+  echo "    Rebuild later: /usr/local/lib/mjolnir/rebuild-caddy.sh"
+else
+  echo "==> Skipping xcaddy/Caddy (--no-caddy)"
 fi
 
 if [[ "$IT87" -eq 1 ]]; then
@@ -300,4 +395,6 @@ if [[ "$IN_CHROOT" == "1" ]]; then
 else
   echo "    Reboot recommended. Then: nvidia-smi && tailscale up"
 fi
+echo "    HTTPS: set CF_API_TOKEN in /etc/caddy/caddy.env → systemctl restart caddy"
+echo "    Clients: export OLLAMA_HOST=https://${CADDY_DOMAIN}"
 echo "    BIOS Smart Fan unlock still required — bios_optimize.md"

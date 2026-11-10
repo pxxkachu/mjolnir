@@ -1,0 +1,26 @@
+# Mjolnir — HTTPS front for Ollama on Tailscale
+# Domain: ai.lehaus.io  →  reverse_proxy 127.0.0.1:11434
+#
+# Chosen stack: xcaddy-built /usr/local/bin/caddy + Cloudflare DNS plugin
+#   (NOT the stock Arch caddy package; NOT certbot/lego)
+# Requires: CF_API_TOKEN in /etc/caddy/caddy.env
+# DNS: A/AAAA ai.lehaus.io → Tailscale 100.x (Cloudflare DNS only / grey cloud)
+# Access: tailnet only — see config/nftables.conf
+# Unit: config/caddy.service → /usr/local/bin/caddy
+
+
+{
+	email admin@lehaus.io
+}
+
+ai.lehaus.io {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+		resolvers 1.1.1.1
+	}
+
+	encode gzip
+
+	# Ollama HTTP API (local only; Caddy terminates TLS)
+	reverse_proxy 127.0.0.1:11434
+}

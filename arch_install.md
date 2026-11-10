@@ -2,15 +2,15 @@
 
 **Entry point:** [`README.md`](README.md)
 
-**Goal:** Fresh **Arch Linux only** on the **Samsung 990 PRO 2 TB** PCIe Gen4 NVMe M.2 (`/dev/nvme0n1`). Local **GPU AI server** (Ollama over Tailscale) + **Steam** gaming. Desktop: **minimal GNOME (Wayland)**.
+**Goal:** Fresh **Arch Linux only** on the **Samsung 990 PRO 2 TB** PCIe Gen4 NVMe M.2 (`/dev/nvme0n1`). Local **GPU AI server** (**Ollama** behind **Caddy** at **`https://ai.lehaus.io`** on Tailscale) + **Steam** gaming. Desktop: **minimal GNOME (Wayland)**.
 
 Hardware: [`parts.md`](parts.md) · BIOS: [`bios_optimize.md`](bios_optimize.md)
 
 **Confirmed:** OMEN 5090 **fits** OpenITX; **native 12V-2x6** on SF1000. Hostname **`mjolnir`**. This install **wipes the disk**.
 
-**Packages:** prefer **official Arch repo binaries** (`pacman`) for the stack. **`paru-bin`** is installed by default (AUR helper binary PKGBUILD — not building paru from source). Use **`nvidia-open`** (prebuilt modules), not `nvidia-open-dkms`.
+**Packages:** prefer **official Arch repo binaries** (`pacman`) for the stack. **`paru-bin`** is installed by default. Use **`nvidia-open`** (prebuilt modules), not `nvidia-open-dkms`.
 
-**Exception:** Gigabyte **`it87`** has no binary package on Arch — optional `--it87` installs `it87-dkms-git` via paru (local DKMS compile). CoolerControl userspace stays binary from `extra`.
+**HTTPS (chosen approach):** **`xcaddy-bin`** builds a custom Caddy with the **Cloudflare DNS** plugin → **`/usr/local/bin/caddy`**, plus our own **`caddy.service` / sysuser**. We do **not** install the stock Arch `caddy` package and do **not** use certbot/lego. Optional **`--it87`**. Skip HTTPS with **`--no-caddy`**.
 
 ---
 
@@ -97,7 +97,7 @@ Defaults: hostname `mjolnir`, timezone `America/Chicago`, US mirrors ranked by s
 2. Wipes + partitions the disk (EFI / root / home), formats **ext4**
 3. `pacstrap` base system; copies ranked mirrors into the new root
 4. **`arch-chroot` automatically** — sets timezone, locale, hostname, creates user `laika`, installs systemd-boot
-5. **Still inside that automated chroot** — runs `mjolnir-postinstall.sh` (NVIDIA, GNOME/GDM, Ollama, Steam, Tailscale, paru-bin, fstrim, reflector, …)
+5. **Still inside that automated chroot** — runs `mjolnir-postinstall.sh` (NVIDIA, GNOME/GDM, Ollama on localhost, **xcaddy** → `https://ai.lehaus.io`, Tailscale, nftables, paru-bin, fstrim, reflector, …)
 6. Copies this repo to `/opt/mjolnir` and links `~/mjolnir` for `laika`
 
 **Passwords (interactive — script pauses here)**
@@ -150,51 +150,69 @@ You are **not** in the live ISO anymore. You are **not** in a chroot. This is th
 
 Open **Console** (or any terminal) as `laika`.
 
+Ollama listens on **`127.0.0.1:11434` only**. Clients use **`https://ai.lehaus.io`** on the tailnet. TLS is terminated by **xcaddy-built Caddy** (Cloudflare DNS-01). nftables allows inbound only on **`tailscale0`**.
+
+See [HTTPS: ai.lehaus.io (xcaddy)](#https-ailehausio-xcaddy) for the architecture.
+
 **D1. Join Tailscale**
 
 ```bash
 sudo tailscale up
 # follow the URL / auth prompt
 tailscale ip -4
+# note this 100.x.x.x address for DNS
 ```
 
-**D2. Bind Ollama to the Tailscale IP**
+**D2. Point `ai.lehaus.io` at this machine (Cloudflare DNS)**
+
+1. Cloudflare → **lehaus.io** → DNS → Add record:
+   - **Type:** `A` (and `AAAA` if you use Tailscale IPv6)
+   - **Name:** `ai`
+   - **IPv4:** output of `tailscale ip -4`
+   - **Proxy status:** **DNS only** (grey cloud — not proxied)
+2. Create an API token: **Zone → Zone:Read** + **DNS:Edit** for `lehaus.io`  
+   https://dash.cloudflare.com/profile/api-tokens
+
+**D3. Give xcaddy-Caddy the Cloudflare token and start HTTPS**
 
 ```bash
-TS=$(tailscale ip -4)
-sudo systemctl edit ollama
+# Confirm the xcaddy binary (not /usr/bin/caddy):
+/usr/local/bin/caddy version
+systemctl cat caddy | grep ExecStart=
+# expect: ExecStart=/usr/local/bin/caddy run ...
+
+sudoedit /etc/caddy/caddy.env
+# set:  CF_API_TOKEN=your_token_here
+# file should be mode 600
+
+sudo systemctl restart caddy
+sudo systemctl status caddy
+curl -fsS https://ai.lehaus.io/api/tags
 ```
 
-In the editor, put:
-
-```ini
-[Service]
-Environment="OLLAMA_HOST=REPLACE_WITH_TS_IP:11434"
-Environment="OLLAMA_KEEP_ALIVE=30m"
-```
-
-Replace `REPLACE_WITH_TS_IP` with the output of `tailscale ip -4`, then:
+From any other device **on the same Tailscale tailnet**:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl restart ollama
-curl "http://$(tailscale ip -4):11434/api/tags"
+export OLLAMA_HOST=https://ai.lehaus.io
+curl "$OLLAMA_HOST/api/tags"
 ```
 
-**D3. Quick checks**
+**D4. Quick checks**
 
 ```bash
 nvidia-smi
-systemctl status nvidia-persistenced sleep.target fstrim.timer reflector.timer
+systemctl status nvidia-persistenced sleep.target fstrim.timer reflector.timer caddy nftables
+/usr/local/bin/caddy version
 paru --version
 timedatectl   # should show America/Chicago
+tailscale status
 ```
 
-**D4. BIOS fan unlock (not a script)**
+**D5. BIOS fan unlock (not a script)**
 
 Finish the Smart Fan curve for **CPU_FAN** in BIOS — [`bios_optimize.md`](bios_optimize.md). CoolerControl cannot take the header until that unlock is done.
 
-**D5. Optional later (only if CPU_FAN needs it87)**
+**D6. Optional later (only if CPU_FAN needs it87)**
 
 ```bash
 sudo /opt/mjolnir/scripts/mjolnir-postinstall.sh --user laika --it87
@@ -313,6 +331,26 @@ Stock thermals first; if SF1000 trips under LLM: `nvidia-smi -pl 450`. UV TBD �
 
 ---
 
+## HTTPS: ai.lehaus.io (xcaddy)
+
+**Decision:** use **xcaddy**, not stock Arch `caddy` and not certbot/lego.
+
+| Piece | Value |
+|-------|--------|
+| Build tool | **`xcaddy-bin`** (AUR, via paru) |
+| Plugins | `github.com/caddy-dns/cloudflare` (DNS-01 for Let’s Encrypt) |
+| Binary | **`/usr/local/bin/caddy`** (only Caddy on the system) |
+| Unit / user | [`config/caddy.service`](config/caddy.service), [`config/caddy.sysusers`](config/caddy.sysusers), [`config/caddy.tmpfiles`](config/caddy.tmpfiles) |
+| Site config | [`config/Caddyfile`](config/Caddyfile) → `ai.lehaus.io` → `127.0.0.1:11434` |
+| Secrets | `/etc/caddy/caddy.env` → `CF_API_TOKEN=…` |
+| DNS | Cloudflare **A** `ai` → Tailscale `100.x` · **DNS only** (grey cloud) |
+| Access | Tailnet only (`nftables` + `tailscale0`) |
+| Upgrades | `/usr/local/lib/mjolnir/rebuild-caddy.sh` |
+
+Why not stock Caddy alone? Auto-HTTPS uses HTTP-01 and needs a public `:80`. A Tailscale-only `100.x` name cannot complete that challenge. DNS-01 inside Caddy needs the Cloudflare plugin → **xcaddy**.
+
+---
+
 ## No sleep / GNOME / CoolerControl / Tailscale / Ollama / Steam
 
 Covered by [`scripts/mjolnir-postinstall.sh`](scripts/mjolnir-postinstall.sh). Highlights:
@@ -323,9 +361,10 @@ Covered by [`scripts/mjolnir-postinstall.sh`](scripts/mjolnir-postinstall.sh). H
 | GNOME | Minimal shell + **GDM** (Wayland) |
 | CoolerControl | Binary from `extra`; BIOS unlock for CPU_FAN |
 | **paru-bin** | Installed by default (AUR helper) |
-| **it87** | Optional `--it87` — **only compile step** (DKMS via paru) |
-| Tailscale + nftables | Ollama bound to Tailscale IP (or 127.0.0.1 until `tailscale up`) |
-| Ollama | `ollama` + `ollama-cuda` from `extra` |
+| **HTTPS** | **xcaddy** → `/usr/local/bin/caddy` + our unit → **`https://ai.lehaus.io`** (not stock `caddy`) |
+| **it87** | Optional `--it87` — DKMS via paru |
+| Tailscale + nftables | Inbound allowed on `tailscale0` only |
+| Ollama | `ollama` + `ollama-cuda`; localhost only |
 | Steam | `[multilib]` + `steam` |
 | zram / chrony / fstrim | generator + timers (weekly TRIM on 990 PRO) |
 | Mirrors | `reflector` US HTTPS, **sort rate** → mirrorlist; `reflector.service` + weekly timer |
@@ -340,19 +379,23 @@ Prefer DisplayPort. Set refresh / VRR in **Settings → Displays**. OLED: blank 
 Open frame — only **AXP90 on CPU_FAN** + GPU axial fans. BIOS unlock for **CPU_FAN** — [`bios_optimize.md`](bios_optimize.md). CoolerControl: CPU package → CPU_FAN; never 0 % CPU fan. GPU: OEM/NVIDIA curve (or CoolerControl NVML).
 
 ```bash
-# default (repo binaries + paru-bin):
+# default (repo stack + paru-bin + xcaddy → Caddy w/ Cloudflare DNS):
 sudo ./scripts/mjolnir-postinstall.sh
 # Gigabyte ITE PWM for CPU_FAN (DKMS via paru):
 sudo ./scripts/mjolnir-postinstall.sh --it87
+# Skip HTTPS front:
+sudo ./scripts/mjolnir-postinstall.sh --no-caddy
+# Later Caddy upgrades:
+/usr/local/lib/mjolnir/rebuild-caddy.sh
 ```
 
 ### Clients on other machines
 
 | Client | Point at |
 |--------|----------|
-| CLI | `export OLLAMA_HOST=http://mjolnir:11434` |
-| Open WebUI / Cursor / Continue | `http://mjolnir:11434` over Tailscale |
-| curl | `curl http://mjolnir:11434/api/tags` |
+| CLI | `export OLLAMA_HOST=https://ai.lehaus.io` (device must be on Tailscale) |
+| Open WebUI / Cursor / Continue | `https://ai.lehaus.io` |
+| curl | `curl https://ai.lehaus.io/api/tags` |
 
 ### VRAM (32 GB)
 
@@ -381,7 +424,8 @@ sbctl create-keys && sbctl enroll-keys -m
 | Wayland / GNOME | GDM session · `echo $XDG_SESSION_TYPE` → `wayland` |
 | Fans | CoolerControl moves **CPU_FAN** off 40 % unlock (no SYS case fans) |
 | Ollama GPU | Model run shows process in nvidia-smi |
-| API locked down | From off-tailnet host: connection **fails**; from tailnet: `/api/tags` OK |
+| API locked down | Off-tailnet: **fails**; on tailnet: `curl https://ai.lehaus.io/api/tags` OK |
+| xcaddy Caddy | `systemctl status caddy` active; `ExecStart=/usr/local/bin/caddy`; cert after `CF_API_TOKEN` |
 | Steam | Proton title launches |
 | Chrony | `chronyc tracking` |
 | TRIM | `systemctl status fstrim.timer` → enabled |
@@ -397,7 +441,8 @@ sbctl create-keys && sbctl enroll-keys -m
 | No NVIDIA device | `nvidia-open`, modeset, `journalctl -b` |
 | GNOME / GDM black screen | Fix NVIDIA DRM; `nvidia-smi` in TTY; try GNOME on Xorg once from GDM gear menu |
 | Ollama on CPU only | CUDA pkgs + persistenced + reboot |
-| API reachable from WAN/LAN | Rebind to Tailscale IP; check nftables |
+| API reachable from WAN | Check nftables (should only allow `tailscale0`); confirm Cloudflare record is **DNS only** |
+| Caddy cert / TLS fail | `CF_API_TOKEN` in `/etc/caddy/caddy.env`; DNS A → Tailscale IP; `journalctl -u caddy` |
 | PSU trip under LLM | `nvidia-smi -pl 450` (tune); check 12V-2x6 seat |
 | Fans stuck ~40 % | `coolercontrold` + `it87`; BIOS unlock curve |
 | Suspend broke GPU | Sleep targets should be masked — do not unmask |
@@ -411,4 +456,7 @@ sbctl create-keys && sbctl enroll-keys -m
 | [`README.md`](README.md) | Overview |
 | [`parts.md`](parts.md) | Hardware source of truth |
 | [`bios_optimize.md`](bios_optimize.md) | BIOS + GPU power / fan unlock |
-| [`scripts/mjolnir-postinstall.sh`](scripts/mjolnir-postinstall.sh) | Automated post-install (repo stack + paru-bin) |
+| [`scripts/mjolnir-postinstall.sh`](scripts/mjolnir-postinstall.sh) | Automated post-install (stack + paru-bin + Caddy) |
+| [`config/Caddyfile`](config/Caddyfile) | `ai.lehaus.io` → Ollama |
+| [`config/caddy.service`](config/caddy.service) | systemd unit for xcaddy binary |
+| [`config/nftables.conf`](config/nftables.conf) | Tailscale-only inbound filter |

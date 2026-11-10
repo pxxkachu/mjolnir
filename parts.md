@@ -149,12 +149,13 @@ Use this file as the hardware and software source of truth when writing guides o
 | Desktop | **GNOME** minimal (Wayland) + **GDM** |
 | Boot | **UEFI** + **Secure Boot** (sbctl) + **fTPM** |
 | GPU | **`nvidia-open`** + `nvidia-utils` |
-| AI runtime | **Ollama** (+ CUDA); API over Tailscale |
+| AI runtime | **Ollama** (+ CUDA) behind **Caddy** at **`https://ai.lehaus.io`** |
 | Gaming | **Steam** + Proton |
 | Fans | No case fans · CoolerControl for **CPU_FAN** (+ GPU); optional `it87` |
-| Install automation | [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) full ISO wipe+install; [`scripts/mjolnir-postinstall.sh`](scripts/mjolnir-postinstall.sh) stack + **paru-bin** |
+| Install automation | [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) full ISO wipe+install; [`scripts/mjolnir-postinstall.sh`](scripts/mjolnir-postinstall.sh) stack + **paru-bin** + **xcaddy** |
 | Homelab | **Tailscale** |
-| Firewall | **nftables** (Tailscale-only AI API) |
+| HTTPS front | **xcaddy** → `/usr/local/bin/caddy` + our unit · **`ai.lehaus.io`** · **not** stock `caddy` / certbot |
+| Firewall | **nftables** — inbound on `tailscale0` only |
 | Idle / sleep | **Disabled** (always-on AI box) |
 | SSD TRIM | **`fstrim.timer`** (weekly) |
 | GPU daemon | **nvidia-persistenced** (headless Ollama) |
@@ -244,8 +245,13 @@ os:
 
 network:
   tailscale: required
-  ollama_bind: tailscale_ip_or_firewall
-  ollama_api: "http://mjolnir:11434"
+  ollama_bind: "127.0.0.1:11434"
+  ollama_api: "https://ai.lehaus.io"
+  caddy: xcaddy_cloudflare_dns
+  caddy_bin: /usr/local/bin/caddy
+  caddy_unit: config/caddy.service
+  caddy_domain: ai.lehaus.io
+  caddy_not: [stock_arch_caddy, certbot, lego]
   wol: optional
 
 power:
@@ -275,7 +281,7 @@ virtualization: false
 | Repo | https://github.com/pxxkachu/mjolnir |
 | OS | **Arch Linux only** (wipe Windows) |
 | Desktop | **GNOME** minimal (Wayland) + **GDM** |
-| AI stack | **Ollama** + CUDA, Tailscale clients |
+| AI stack | **Ollama** + CUDA · **`https://ai.lehaus.io`** (xcaddy/Caddy) · Tailscale clients |
 | Gaming | Steam + Proton |
 | Disk | Samsung **990 PRO 2 TB** PCIe Gen4 NVMe M.2 (`/dev/nvme0n1`) |
 | Bootloader | **systemd-boot** |
