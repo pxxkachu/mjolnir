@@ -90,9 +90,8 @@ echo "    User: $USER_NAME"
 [[ "$IN_CHROOT" == "1" ]] && echo "    (chroot mode — services enabled, not started)"
 
 PKGS=(
-  # NVIDIA
+  # NVIDIA (nvidia-persistenced binary + unit ship in nvidia-utils — not a separate pkg)
   nvidia-open nvidia-utils lib32-nvidia-utils egl-wayland nvidia-settings
-  nvidia-persistenced
   # Minimal GNOME (not the full `gnome` meta)
   # Settings=gnome-control-center · Files=nautilus · Tweaks=gnome-tweaks
   gnome-shell gdm gnome-control-center gnome-tweaks gnome-console nautilus

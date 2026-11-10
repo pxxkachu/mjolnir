@@ -373,8 +373,10 @@ Full profile + Smart Fan **unlock** curve: [`bios_optimize.md`](bios_optimize.md
 Use repo **`nvidia-open`** (prebuilt for `linux`) — **not** `nvidia-open-dkms`.
 
 ```bash
-pacman -S nvidia-open nvidia-utils lib32-nvidia-utils egl-wayland nvidia-settings nvidia-persistenced
+pacman -S nvidia-open nvidia-utils lib32-nvidia-utils egl-wayland nvidia-settings
 ```
+
+`nvidia-persistenced` is **not** a separate package — binary + unit come from **`nvidia-utils`**.
 
 `/etc/modprobe.d/nvidia.conf`: `options nvidia_drm modeset=1`
 

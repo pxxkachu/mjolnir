@@ -162,7 +162,7 @@ Use this file as the hardware and software source of truth when writing guides o
 | Firewall | **nftables** — inbound on `tailscale0` only |
 | Idle / sleep | **Disabled** (always-on AI box) |
 | SSD TRIM | **`fstrim.timer`** (weekly) |
-| GPU daemon | **nvidia-persistenced** (headless Ollama) |
+| GPU daemon | **nvidia-persistenced** (from `nvidia-utils`; headless Ollama) |
 | HW utilities | `nvme-cli` `smartmontools` `nvtop` `btop` `libva-nvidia-driver` `vulkan-tools` `gamemode` `fwupd` |
 
 ---
