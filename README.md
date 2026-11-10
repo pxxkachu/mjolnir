@@ -1,4 +1,4 @@
-# OpenITX
+# OpenITX — Mjolnir
 
 Mini-ITX gaming and homelab workstation in a custom **OpenITX** case. **Arch Linux only** on a **Samsung 990 PRO 2 TB** PCIe Gen4 NVMe M.2 SSD.
 
@@ -16,14 +16,13 @@ Mini-ITX gaming and homelab workstation in a custom **OpenITX** case. **Arch Lin
 | **CPU** | AMD Ryzen 7 **9800X3D** | PBO Advanced, CO **−35** |
 | **GPU** | NVIDIA RTX **5090** HP OMEN OEM (32 GB) | Fit **confirmed** · `nvidia-open` + llama.cpp |
 | **Board** | Gigabyte **B850I AORUS PRO** **Rev 1.0** | Realtek 2.5G + RTL8922AE Wi‑Fi 7 · UEFI / fTPM |
-| **RAM** | G.Skill Ripjaws S5 2×48 GB | **6000 CL30-36-36-30** — BIOS **done** *(kit XMP 6800 failed)* |
+| **RAM** | G.Skill Ripjaws S5 2×48 GB | **6000 CL30-36-36-30** — BIOS **done** |
 | **Storage** | Samsung **990 PRO** 2 TB PCIe Gen4 NVMe M.2 | `/dev/nvme0n1` · GPT ext4 · Arch only |
 | **Cooler** | Thermalright **AXP90-X47** | Low-profile top-down |
-| **Case fans** | **None** | Open frame — CPU + GPU fans only |
-| **PSU** | Corsair **1000 W SFF** | Native **12V-2x6 confirmed** · edge under LLM |
+| **PSU** | Corsair **1000 W SFF** | Native **12V-2x6 confirmed** |
 | **Display** | ASUS ROG Swift **PG32UCDP** | 32" OLED 4K |
 
-Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
+Full BOM → [`parts.md`](parts.md)
 
 ---
 
@@ -33,27 +32,34 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 |-------|--------|
 | **OS** | Arch Linux (sole OS) |
 | **Desktop** | **GNOME** minimal (Wayland) + GDM |
-| **AI** | **llama-cpp** + **ggml-cuda** · `llama-server` · **xcaddy** `/usr/local/bin/caddy` → `https://ai.lehaus.io` (Tailscale) · no sleep · `nvidia-persistenced` |
-| **Gaming** | Not installed for now (Steam deferred) |
-| **Fans** | CoolerControl for CPU/GPU (no case fans; optional `it87`) |
+| **AI** | **llama-cpp** + **ggml-cuda** · `llama-server` · **xcaddy** + **Porkbun** → `https://ai.lehaus.io` |
+| **Gaming** | Deferred (Steam not installed) |
+| **Fans** | CoolerControl (+ optional `it87`) |
 
 ---
 
-## Setup path
+## Setup path (dxp480tp-style)
 
 ```
 1. BIOS            →  bios_optimize.md
-2. Arch live ISO   →  bash scripts/mjolnir-install.sh   # defaults: nvme0n1 + laika + wipe; runs postinstall
-3. Reboot          →  GDM → GNOME → tailscale up → Caddy token
+2. Arch live ISO   →  bash install.sh          # base OS only; type ERASE
+3. Reboot          →  continue arch_install.md (post-install sections)
 ```
 
-| Step | Doc / script | What you do |
-|------|--------------|-------------|
-| **1. BIOS** | [`bios_optimize.md`](bios_optimize.md) | Boot / CPU / GPU / Smart Fan unlock *(memory already done)* |
-| **2. Full install** | [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) | One script: wipe → pacstrap → **auto postinstall** (do not run postinstall separately) |
-| **3. Verify** | [`arch_install.md`](arch_install.md) | `nvidia-smi`, Tailscale API, CoolerControl, `llama-server` |
+| Step | Doc / script |
+|------|----------------|
+| **1. BIOS** | [`bios_optimize.md`](bios_optimize.md) |
+| **2. Base install** | [`install.sh`](install.sh) + first half of [`arch_install.md`](arch_install.md) |
+| **3. Stack** | Rest of [`arch_install.md`](arch_install.md) — NVIDIA, GNOME, llama.cpp, xcaddy/Porkbun, … |
 
-**How to run** (step-by-step commands, reboot, chroot notes): [`arch_install.md` — Step-by-step install](arch_install.md#step-by-step-install-follow-in-order)
+Live ISO:
+
+```bash
+pacman -Sy --needed git
+git clone https://github.com/pxxkachu/mjolnir.git /tmp/mjolnir
+cd /tmp/mjolnir
+bash install.sh
+```
 
 ---
 
@@ -61,37 +67,10 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 
 | File | Purpose |
 |------|---------|
-| **[`parts.md`](parts.md)** | Hardware source of truth — components, software stack, agent YAML |
-| **[`bios_optimize.md`](bios_optimize.md)** | Gigabyte BIOS settings + NVIDIA GPU / fan notes |
-| **[`arch_install.md`](arch_install.md)** | Install guide + verification |
-| **[`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh)** | **Full** automated install from Arch ISO |
-| **[`scripts/mjolnir-postinstall.sh`](scripts/mjolnir-postinstall.sh)** | Stack-only (or re-run after base) |
-
----
-
-## Validated tuning (summary)
-
-**Memory:** **Done** — 6000 MT/s · CL30-36-36-30 · FCLK 2000 · UCLK 1:1 · DRAM 1.35 V · SOC 1.15 V · **A2 + B2**
-
-**CPU:** PBO Advanced · Curve Optimizer **−35** all cores · Scalar **1X** · SVM off
-
-**GPU:** Stock OEM (~**575 W** TGP) first. **`nvidia-open`** + **persistenced**. `nvidia-smi -pl` if PSU trips under LLM. UV TBD.
-
-**Fans:** No case fans. **CoolerControl** on **CPU_FAN** (+ GPU); BIOS unlock for CPU header only
-
-**AI ops:** **`https://ai.lehaus.io`** via **xcaddy** (Porkbun DNS-01, same as dxp480tp; **not** stock `caddy` / certbot) → `llama-server` on `127.0.0.1:8080` · Tailscale-only nftables · sleep **masked** · **America/Chicago**
-
-HTTPS details → [`arch_install.md` — HTTPS: ai.lehaus.io (xcaddy)](arch_install.md#https-ailehausio-xcaddy)
-
----
-
-## Troubleshooting
-
-| Problem | Where to look |
-|---------|----------------|
-| No POST / RAM training | [`bios_optimize.md`](bios_optimize.md) |
-| WHEA / stutter / GPU power | [`bios_optimize.md`](bios_optimize.md) |
-| Install / GNOME / llama.cpp | [`arch_install.md`](arch_install.md) |
+| **[`arch_install.md`](arch_install.md)** | Full guide: live ISO + copy-paste stack (Caddyfile / units inline) |
+| **[`install.sh`](install.sh)** | Base Arch installer (live ISO) |
+| **[`parts.md`](parts.md)** | Hardware / stack source of truth |
+| **[`bios_optimize.md`](bios_optimize.md)** | Gigabyte BIOS + fan unlock |
 
 ---
 
@@ -106,11 +85,12 @@ desktop: GNOME minimal
 cpu: Ryzen 7 9800X3D
 gpu: RTX 5090 (HP OMEN OEM)
 ram: 96GB @ 6000 CL30-36-36-30
-storage: Samsung 990 PRO 2TB PCIe Gen4 NVMe M.2 (/dev/nvme0n1)
+storage: Samsung 990 PRO 2TB (/dev/nvme0n1)
 aur_helper: paru-bin
 repo: https://github.com/pxxkachu/mjolnir
 llama_api: https://ai.lehaus.io
 llama_bind: "127.0.0.1:8080"
+caddy: xcaddy_porkbun_dns
 workloads:
   - local_ai_server_llamacpp
   - homelab_control
@@ -119,5 +99,3 @@ docs:
   bios: bios_optimize.md
   install: arch_install.md
 ```
-
-Extended YAML → [`parts.md`](parts.md#quick-reference-agent-lookup)

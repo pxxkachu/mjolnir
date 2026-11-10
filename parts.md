@@ -129,7 +129,7 @@ Use this file as the hardware and software source of truth when writing guides o
 | Encryption | Optional LUKS |
 | Bootloader | **systemd-boot** |
 
-**Install notes:** Fresh wipe via [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) `--disk /dev/nvme0n1`.
+**Install notes:** Fresh wipe via [`install.sh`](install.sh) (interactive; prefer `/dev/nvme0n1`). Stack: [`arch_install.md`](arch_install.md).
 
 ---
 
@@ -157,7 +157,7 @@ Use this file as the hardware and software source of truth when writing guides o
 | Gaming | Deferred (Steam not installed) |
 | Network | **NetworkManager** + **Bluetooth** (`bluez`) + **openssh** |
 | Fans | **CoolerControl** (+ optional `--it87`); BIOS unlock for CPU_FAN |
-| Install automation | [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) + [`scripts/mjolnir-postinstall.sh`](scripts/mjolnir-postinstall.sh) (required pkgs only + paru/xcaddy) |
+| Install | [`install.sh`](install.sh) base wipe; [`arch_install.md`](arch_install.md) copy-paste stack (dxp480tp-style) |
 | Homelab | **Tailscale** |
 | HTTPS front | **xcaddy** → `/usr/local/bin/caddy` · **`ai.lehaus.io`** · **not** stock `caddy` / certbot |
 | Firewall | **nftables** — inbound on `tailscale0` only |
@@ -257,8 +257,8 @@ os:
   case_fans: none
   fans: coolercontrol_cpu_and_gpu
   it87: optional_dkms_compile
-  install_script: scripts/mjolnir-install.sh
-  postinstall_script: scripts/mjolnir-postinstall.sh
+  install_script: install.sh
+  postinstall_guide: arch_install.md
   packages: official_repo_binaries
   aur_helper: paru-bin
 
@@ -268,9 +268,11 @@ network:
   llama_api: "https://ai.lehaus.io"
   caddy: xcaddy_porkbun_dns
   caddy_bin: /usr/local/bin/caddy
-  caddy_unit: config/caddy.service
+  caddy_unit: /etc/systemd/system/caddy.service
   caddy_domain: ai.lehaus.io
   caddy_not: [stock_arch_caddy, certbot, lego]
+  terminal: ghostty
+  ghostty_nautilus: true
   wol: optional
 
 power:
