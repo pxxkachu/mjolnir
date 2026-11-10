@@ -229,7 +229,13 @@ expect_stdout_match 'reflector' "dry-run ranks mirrors" \
 expect_stdout_match 'xcaddy' "install dry-run nests postinstall xcaddy" \
   bash "$INSTALL" --dry-run
 
-expect_stdout_match 'OLLAMA_HOST=127.0.0.1:11434' "install dry-run ollama localhost" \
+expect_stdout_match '127.0.0.1:8080' "install dry-run llama-server localhost" \
+  bash "$INSTALL" --dry-run
+
+expect_stdout_match 'llama-cpp' "install dry-run llama-cpp" \
+  bash "$INSTALL" --dry-run
+
+expect_stdout_match 'ggml-cuda' "install dry-run ggml-cuda" \
   bash "$INSTALL" --dry-run
 
 echo
@@ -267,6 +273,12 @@ expect_stdout_match 'skip interactive tailscale' "post dry-run --no-tailscale-up
 expect_stdout_match 'fstrim.timer' "post dry-run fstrim" \
   bash "$POST" --user laika --dry-run
 
+expect_stdout_match 'NetworkManager' "post dry-run NetworkManager" \
+  bash "$POST" --user laika --dry-run
+
+expect_stdout_match 'bluetooth' "post dry-run bluetooth" \
+  bash "$POST" --user laika --dry-run
+
 expect_stdout_match 'nftables' "post dry-run nftables" \
   bash "$POST" --user laika --dry-run
 
@@ -285,11 +297,24 @@ grep -q 'nvme\*\]' "$INSTALL" || grep -q 'nvme' "$INSTALL" && record PASS "nvme 
 
 # Caddyfile sanity
 grep -q 'ai.lehaus.io' "$REPO_ROOT/config/Caddyfile" && record PASS "Caddyfile domain" || record FAIL "Caddyfile domain"
-grep -q '127.0.0.1:11434' "$REPO_ROOT/config/Caddyfile" && record PASS "Caddyfile ollama upstream" || record FAIL "Caddyfile ollama upstream"
+grep -q '127.0.0.1:8080' "$REPO_ROOT/config/Caddyfile" && record PASS "Caddyfile llama-server upstream" || record FAIL "Caddyfile llama-server upstream"
+grep -q 'llama-server' "$REPO_ROOT/config/llama-server.service" && record PASS "llama-server unit present" || record FAIL "llama-server unit present"
+# PKGS: required AI/net/BT; no bloat / deferred stacks
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*llama-cpp\s*$' && record PASS "PKGS has llama-cpp" || record FAIL "PKGS has llama-cpp"
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*ggml-cuda\s*$' && record PASS "PKGS has ggml-cuda" || record FAIL "PKGS has ggml-cuda"
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*networkmanager\s*$' && record PASS "PKGS has networkmanager" || record FAIL "PKGS has networkmanager"
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*bluez\s*$' && record PASS "PKGS has bluez" || record FAIL "PKGS has bluez"
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*bluez-utils\s*$' && record PASS "PKGS has bluez-utils" || record FAIL "PKGS has bluez-utils"
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*coolercontrol\s*$' && record PASS "PKGS has coolercontrol" || record FAIL "PKGS has coolercontrol"
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*firefox\s*$' && record PASS "PKGS has firefox" || record FAIL "PKGS has firefox"
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*nautilus\s*$' && record PASS "PKGS has nautilus" || record FAIL "PKGS has nautilus"
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*openssh\s*$' && record PASS "PKGS has openssh" || record FAIL "PKGS has openssh"
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*nftables\s*$' && record PASS "PKGS has nftables" || record FAIL "PKGS has nftables"
+awk '/^PKGS=\(/,/^\)/' "$POST" | grep -qE '^\s*(ollama|ollama-cuda|steam|vulkan-tools|gamemode|fwupd)\s*$' \
+  && record FAIL "PKGS still has deferred pkgs" || record PASS "PKGS no deferred pkgs"
 grep -q 'cloudflare' "$REPO_ROOT/config/Caddyfile" && record PASS "Caddyfile cloudflare dns" || record FAIL "Caddyfile cloudflare dns"
 grep -q '/usr/local/bin/caddy' "$REPO_ROOT/config/caddy.service" && record PASS "caddy.service uses xcaddy binary" || record FAIL "caddy.service binary path"
 
-# nftables mentions tailscale
 grep -q 'tailscale0' "$REPO_ROOT/config/nftables.conf" && record PASS "nftables tailscale0" || record FAIL "nftables tailscale0"
 
 echo

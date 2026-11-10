@@ -5,8 +5,9 @@
 #   1. paru installs xcaddy-bin
 #   2. xcaddy build --with github.com/caddy-dns/cloudflare → /usr/local/bin/caddy
 #   3. Install our systemd unit/sysuser/tmpfiles from config/caddy.*
-#   4. Caddyfile reverse_proxy → Ollama 127.0.0.1:11434; TLS via Cloudflare DNS-01
+#   4. Caddyfile reverse_proxy → llama-server 127.0.0.1:8080; TLS via Cloudflare DNS-01
 #
+# AI stack: official Arch llama-cpp + ggml-cuda (not Ollama). No Steam/multilib.
 # Only --it87 triggers an extra DKMS compile (it87-dkms-git).
 #
 #   sudo ./scripts/mjolnir-postinstall.sh
@@ -40,8 +41,8 @@ Usage: sudo ./mjolnir-postinstall.sh [options]
   --dry-run           Print the plan; make no changes (no root required)
   -h, --help          Show this help
 
-Default: repo binaries + paru-bin + xcaddy → /usr/local/bin/caddy (Cloudflare DNS)
-for https://ai.lehaus.io. No stock caddy package; no certbot/lego.
+Default: llama-cpp + ggml-cuda + paru-bin + xcaddy → /usr/local/bin/caddy
+(Cloudflare DNS) for https://ai.lehaus.io. No Ollama, Steam, stock caddy, or certbot.
 EOF
 }
 
@@ -89,25 +90,62 @@ echo "==> Mjolnir post-install (repo packages + paru-bin)$([[ "$DRY_RUN" -eq 1 ]
 echo "    User: $USER_NAME"
 [[ "$IN_CHROOT" == "1" ]] && echo "    (chroot mode — services enabled, not started)"
 
+# Core: GNOME Wayland + llama.cpp CUDA + xcaddy + Tailscale + NM + Bluetooth.
+# Plus requested desktop/ops: Files, Firefox, Tweaks, CoolerControl, monitors, SSH, nvidia-settings.
+# Deferred: Steam, Ollama, fwupd, reflector/chrony/zram/ethtool.
 PKGS=(
-  # NVIDIA (nvidia-persistenced binary + unit ship in nvidia-utils — not a separate pkg)
-  nvidia-open nvidia-utils lib32-nvidia-utils egl-wayland nvidia-settings
-  # Minimal GNOME (not the full `gnome` meta)
-  # Settings=gnome-control-center · Files=nautilus · Tweaks=gnome-tweaks
-  gnome-shell gdm gnome-control-center gnome-tweaks gnome-console nautilus
-  gnome-keyring xdg-desktop-portal-gnome
-  pipewire wireplumber
-  firefox noto-fonts
-  # Hardware utilities (990 PRO / 5090 / 9800X3D / Steam)
-  nvme-cli smartmontools nvtop btop
-  libva-nvidia-driver vulkan-tools gamemode fwupd
-  # Stack
-  coolercontrol lm_sensors
-  ollama ollama-cuda tailscale nftables
-  steam git openssh
-  reflector chrony zram-generator
-  ethtool
-  # paru-bin / makepkg (xcaddy-bin is AUR; go is installed only when building Caddy)
+  # GPU — display (Wayland) + CUDA runtime for ggml-cuda (persistenced in nvidia-utils)
+  nvidia-open
+  nvidia-utils
+  egl-wayland
+  nvidia-settings
+
+  # GNOME (not the full `gnome` group)
+  gnome-shell
+  gdm
+  gnome-control-center
+  gnome-console
+  gnome-keyring
+  xdg-desktop-portal-gnome
+  nautilus
+  gnome-tweaks
+  firefox
+  noto-fonts
+
+  # Audio + Bluetooth audio (PipeWire ArchWiki)
+  pipewire
+  pipewire-audio
+  pipewire-pulse
+  wireplumber
+
+  # Wired/Wi‑Fi (also pacstrapped; --needed for postinstall-only runs)
+  networkmanager
+
+  # Bluetooth (GNOME Settings UI via control-center)
+  bluez
+  bluez-utils
+
+  # AI — official Arch llama.cpp + CUDA backend (pulls cuda ~2.4G + nccl)
+  llama-cpp
+  ggml-cuda
+
+  # Fans (CPU_FAN; BIOS unlock still required — bios_optimize.md)
+  coolercontrol
+  lm_sensors
+
+  # Monitors
+  nvtop
+  btop
+
+  # Remote shell (alongside Tailscale)
+  openssh
+
+  # Tailnet + inbound firewall (Tailscale-only — config/nftables.conf)
+  tailscale
+  nftables
+
+  # paru-bin (AUR) + xcaddy-bin build; `go` installed only when building Caddy
+  git
   base-devel
 )
 
@@ -159,22 +197,20 @@ install_paru_bin() {
 }
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "==> Would enable [multilib] if needed"
   run pacman -Syu --noconfirm
   echo "==> Would install ${#PKGS[@]} packages:"
   printf '    %s\n' "${PKGS[@]}"
   install_paru_bin
-  run install -d /etc/systemd
-  echo "DRY-RUN: write /etc/systemd/zram-generator.conf"
   echo "DRY-RUN: write /etc/modprobe.d/nvidia.conf (modeset=1)"
   run systemctl enable nvidia-persistenced.service
   echo "DRY-RUN: write logind no-sleep drop-in + mask sleep targets"
-  echo "DRY-RUN: write /etc/xdg/reflector/reflector.conf (US HTTPS, sort rate)"
-  echo "DRY-RUN: reflector --country US --sort rate → /etc/pacman.d/mirrorlist"
-  run systemctl enable reflector.timer reflector.service fstrim.timer chronyd.service coolercontrold.service gdm.service
-  run systemctl enable nftables.service tailscaled.service ollama.service
+  run systemctl enable NetworkManager.service bluetooth.service fstrim.timer
+  run systemctl enable coolercontrold.service
+  run systemctl enable sshd.service gdm.service
+  run systemctl enable nftables.service tailscaled.service llama-server.service
   echo "DRY-RUN: enable GDM → GNOME Wayland session"
-  echo "DRY-RUN: write ollama.service.d/override.conf (OLLAMA_HOST=127.0.0.1:11434)"
+  echo "DRY-RUN: install llama-server.service → 127.0.0.1:8080 (CUDA -ngl 99)"
+  echo "DRY-RUN: mkdir /home/${USER_NAME}/models (active.gguf gate)"
   echo "DRY-RUN: install nftables.conf (Tailscale-only input)"
   if [[ "$SKIP_CADDY" -eq 0 ]]; then
     install_xcaddy_caddy
@@ -199,26 +235,12 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-# --- multilib ---
-if ! grep -q '^\[multilib\]' /etc/pacman.conf; then
-  echo "==> Enabling [multilib]"
-  sed -i '/^#\[multilib\]/,/^#Include = \/etc\/pacman.d\/mirrorlist/{s/^#//}' /etc/pacman.conf
-fi
-
 pacman -Syu --noconfirm
 
 echo "==> Installing packages"
 pacman -S --needed --noconfirm "${PKGS[@]}"
 
 install_paru_bin
-
-echo "==> zram-generator"
-install -d /etc/systemd
-cat >/etc/systemd/zram-generator.conf <<'EOF'
-[zram0]
-zram-size = min(ram / 2, 16384)
-compression-algorithm = zstd
-EOF
 
 echo "==> NVIDIA modprobe + persistenced"
 install -d /etc/modprobe.d
@@ -233,7 +255,7 @@ if command -v mkinitcpio >/dev/null; then
   mkinitcpio -P || true
 fi
 
-echo "==> Disabling sleep/suspend"
+echo "==> Disabling sleep/suspend (always-on AI box)"
 install -d /etc/systemd/logind.conf.d
 cat >/etc/systemd/logind.conf.d/no-sleep.conf <<'EOF'
 [Login]
@@ -247,44 +269,25 @@ if [[ "$IN_CHROOT" != "1" ]]; then
   systemctl restart systemd-logind.service || true
 fi
 
-echo "==> Fastest US mirrors (permanent reflector.conf) + fstrim.timer + chronyd"
-install -d /etc/xdg/reflector
-# Used by reflector.service / reflector.timer — re-ranks by download rate
-cat >/etc/xdg/reflector/reflector.conf <<'EOF'
---save /etc/pacman.d/mirrorlist
---country US
---protocol https
---age 12
---latest 20
---sort rate
-EOF
-# Rank now (also runs on boot via reflector.service; weekly via timer)
+echo "==> NetworkManager + Bluetooth + weekly TRIM"
+systemctl enable NetworkManager.service bluetooth.service fstrim.timer
 if [[ "$IN_CHROOT" != "1" ]]; then
-  reflector \
-    --verbose \
-    --country US \
-    --protocol https \
-    --age 12 \
-    --latest 20 \
-    --sort rate \
-    --save /etc/pacman.d/mirrorlist || true
-fi
-systemctl enable reflector.timer reflector.service fstrim.timer chronyd.service
-if [[ "$IN_CHROOT" != "1" ]]; then
-  systemctl start reflector.timer fstrim.timer chronyd.service || true
+  systemctl start NetworkManager.service bluetooth.service fstrim.timer || true
 fi
 
-echo "==> coolercontrold"
+echo "==> CoolerControl + sensors"
 systemctl enable coolercontrold.service
 if [[ "$IN_CHROOT" != "1" ]]; then
   systemctl start coolercontrold.service || true
   yes | sensors-detect --auto >/dev/null 2>&1 || true
 fi
 
-echo "==> GDM → minimal GNOME (Wayland) for user ${USER_NAME}"
-systemctl enable gdm.service
+echo "==> SSH (sshd) + GDM → GNOME (Wayland) for user ${USER_NAME}"
+systemctl enable sshd.service gdm.service
 systemctl set-default graphical.target || true
-# Prefer Wayland session (GNOME default on modern installs)
+if [[ "$IN_CHROOT" != "1" ]]; then
+  systemctl start sshd.service || true
+fi
 
 echo "==> Tailscale + nftables (Tailscale-only inbound)"
 if [[ -f "$REPO_ROOT/config/nftables.conf" ]]; then
@@ -292,7 +295,7 @@ if [[ -f "$REPO_ROOT/config/nftables.conf" ]]; then
 else
   echo "    WARN: missing $REPO_ROOT/config/nftables.conf"
 fi
-systemctl enable nftables.service tailscaled.service ollama.service
+systemctl enable nftables.service tailscaled.service
 if [[ "$IN_CHROOT" != "1" ]]; then
   systemctl start nftables.service tailscaled.service || true
 fi
@@ -302,17 +305,30 @@ if [[ "$TAILSCALE_UP" -eq 1 && "$IN_CHROOT" != "1" ]]; then
   sudo -u "$USER_NAME" tailscale up || tailscale up || true
 fi
 
-echo "==> Ollama on 127.0.0.1:11434 (HTTPS via Caddy → ${CADDY_DOMAIN})"
-install -d /etc/systemd/system/ollama.service.d
-cat >/etc/systemd/system/ollama.service.d/override.conf <<'EOF'
-[Service]
-# Reachable on the tailnet as https://ai.lehaus.io (Caddy). Do not bind :11434 to WAN.
-Environment="OLLAMA_HOST=127.0.0.1:11434"
-Environment="OLLAMA_KEEP_ALIVE=30m"
-EOF
+echo "==> llama-server on 127.0.0.1:8080 (HTTPS via Caddy → ${CADDY_DOMAIN})"
+install -d "/home/${USER_NAME}/models"
+chown "${USER_NAME}:${USER_NAME}" "/home/${USER_NAME}/models"
+if [[ -f "$REPO_ROOT/config/llama-server.service" ]]; then
+  # Rewrite User=/Group=/paths for --user
+  sed -e "s|/home/laika|/home/${USER_NAME}|g" \
+      -e "s|^User=laika$|User=${USER_NAME}|" \
+      -e "s|^Group=laika$|Group=${USER_NAME}|" \
+      "$REPO_ROOT/config/llama-server.service" \
+      >/etc/systemd/system/llama-server.service
+else
+  echo "    WARN: missing $REPO_ROOT/config/llama-server.service"
+fi
+if [[ -f "$REPO_ROOT/config/llama-server.env.example" ]]; then
+  install -m 644 "$REPO_ROOT/config/llama-server.env.example" /etc/llama-server.env
+fi
 systemctl daemon-reload || true
-if [[ "$IN_CHROOT" != "1" ]]; then
-  systemctl restart ollama.service || systemctl start ollama.service || true
+systemctl enable llama-server.service
+# Starts only when /home/$USER/models/active.gguf exists (ConditionPathExists)
+if [[ "$IN_CHROOT" != "1" && -e "/home/${USER_NAME}/models/active.gguf" ]]; then
+  systemctl restart llama-server.service || systemctl start llama-server.service || true
+else
+  echo "    Place a GGUF, then: ln -sfn ~/models/<file>.gguf ~/models/active.gguf"
+  echo "    sudo systemctl start llama-server"
 fi
 
 if [[ "$SKIP_CADDY" -eq 0 ]]; then
@@ -396,5 +412,6 @@ else
   echo "    Reboot recommended. Then: nvidia-smi && tailscale up"
 fi
 echo "    HTTPS: set CF_API_TOKEN in /etc/caddy/caddy.env → systemctl restart caddy"
-echo "    Clients: export OLLAMA_HOST=https://${CADDY_DOMAIN}"
+echo "    Model: ln -sfn ~/models/<file>.gguf ~/models/active.gguf && sudo systemctl start llama-server"
+echo "    Clients: curl https://${CADDY_DOMAIN}/v1/models   (OpenAI-compatible)"
 echo "    BIOS Smart Fan unlock still required — bios_optimize.md"

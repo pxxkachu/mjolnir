@@ -1,0 +1,28 @@
+# Mjolnir — llama.cpp HTTP API (OpenAI-compatible) on localhost only.
+# HTTPS via xcaddy Caddy → https://ai.lehaus.io (Tailscale).
+#
+# Start gate: symlink a GGUF to /home/USER/models/active.gguf, then:
+#   sudo systemctl enable --now llama-server
+# User= is rewritten by postinstall for --user.
+
+[Unit]
+Description=llama.cpp server (CUDA)
+Documentation=https://wiki.archlinux.org/title/Llama.cpp
+After=network-online.target nvidia-persistenced.service
+Wants=network-online.target
+ConditionPathExists=/home/laika/models/active.gguf
+
+[Service]
+Type=simple
+User=laika
+Group=laika
+EnvironmentFile=-/etc/llama-server.env
+WorkingDirectory=/home/laika
+# Full GPU offload (-ngl 99); bind loopback only — Caddy terminates TLS on the tailnet
+ExecStart=/usr/bin/llama-server --host 127.0.0.1 --port 8080 -ngl 99 -m /home/laika/models/active.gguf
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

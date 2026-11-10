@@ -1,6 +1,6 @@
 # OpenITX — System Profile
 
-Desktop workstation for a **local GPU AI server**, Steam gaming, light development, and homelab control. **Arch Linux only.** **Entry point:** [`README.md`](README.md)
+Desktop workstation for a **local GPU AI server** (llama.cpp), light development, and homelab control. **Arch Linux only.** **Entry point:** [`README.md`](README.md)
 
 Use this file as the hardware and software source of truth when writing guides or troubleshooting docs.
 
@@ -17,7 +17,7 @@ Use this file as the hardware and software source of truth when writing guides o
 | Case | **OpenITX** (custom Mini-ITX) |
 | Boot mode | UEFI + GPT · **Arch only** |
 | Form factor | Desktop (Mini-ITX, SFF) |
-| Primary use | GPU AI server, Steam, light coding, homelab control |
+| Primary use | GPU AI server (llama.cpp), light coding, homelab control |
 | Virtualization | **No** — no local VMs |
 
 ---
@@ -153,17 +153,17 @@ Use this file as the hardware and software source of truth when writing guides o
 | Desktop | **GNOME** minimal (Wayland) + **GDM** |
 | Boot | **UEFI** + **Secure Boot** (sbctl) + **fTPM** |
 | GPU | **`nvidia-open`** + `nvidia-utils` |
-| AI runtime | **Ollama** (+ CUDA) behind **Caddy** at **`https://ai.lehaus.io`** |
-| Gaming | **Steam** + Proton |
-| Fans | No case fans · CoolerControl for **CPU_FAN** (+ GPU); optional `it87` |
-| Install automation | [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) full ISO wipe+install; [`scripts/mjolnir-postinstall.sh`](scripts/mjolnir-postinstall.sh) stack + **paru-bin** + **xcaddy** |
+| AI runtime | **llama-cpp** + **ggml-cuda** (`llama-server`) behind **Caddy** at **`https://ai.lehaus.io`** |
+| Gaming | Deferred (Steam not installed) |
+| Network | **NetworkManager** + **Bluetooth** (`bluez`) + **openssh** |
+| Fans | **CoolerControl** (+ optional `--it87`); BIOS unlock for CPU_FAN |
+| Install automation | [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) + [`scripts/mjolnir-postinstall.sh`](scripts/mjolnir-postinstall.sh) (required pkgs only + paru/xcaddy) |
 | Homelab | **Tailscale** |
-| HTTPS front | **xcaddy** → `/usr/local/bin/caddy` + our unit · **`ai.lehaus.io`** · **not** stock `caddy` / certbot |
+| HTTPS front | **xcaddy** → `/usr/local/bin/caddy` · **`ai.lehaus.io`** · **not** stock `caddy` / certbot |
 | Firewall | **nftables** — inbound on `tailscale0` only |
 | Idle / sleep | **Disabled** (always-on AI box) |
 | SSD TRIM | **`fstrim.timer`** (weekly) |
-| GPU daemon | **nvidia-persistenced** (from `nvidia-utils`; headless Ollama) |
-| HW utilities | `nvme-cli` `smartmontools` `nvtop` `btop` `libva-nvidia-driver` `vulkan-tools` `gamemode` `fwupd` |
+| GPU daemon | **nvidia-persistenced** (from `nvidia-utils`) |
 
 ---
 
@@ -171,8 +171,7 @@ Use this file as the hardware and software source of truth when writing guides o
 
 | Goal | Install |
 |------|---------|
-| Local AI server | Ollama, Tailscale — [`arch_install.md`](arch_install.md) |
-| Steam gaming | Steam, `lib32-nvidia-utils`, Proton |
+| Local AI server | `llama-cpp`, `ggml-cuda`, Tailscale — [`arch_install.md`](arch_install.md) |
 | Light coding | Git, Cursor/VS Code, base-devel |
 | Homelab control | Tailscale, browser, optional sshd |
 
@@ -253,8 +252,8 @@ os:
   desktop: gnome_minimal
   display_server: wayland
   greeter: gdm
-  ai: ollama
-  gaming: steam_proton
+  ai: llama_cpp
+  gaming: deferred
   case_fans: none
   fans: coolercontrol_cpu_and_gpu
   it87: optional_dkms_compile
@@ -265,8 +264,8 @@ os:
 
 network:
   tailscale: required
-  ollama_bind: "127.0.0.1:11434"
-  ollama_api: "https://ai.lehaus.io"
+  llama_bind: "127.0.0.1:8080"
+  llama_api: "https://ai.lehaus.io"
   caddy: xcaddy_cloudflare_dns
   caddy_bin: /usr/local/bin/caddy
   caddy_unit: config/caddy.service
@@ -280,8 +279,7 @@ power:
   fstrim_timer: true
 
 workloads:
-  - local_ai_server
-  - steam_gaming
+  - local_ai_server_llamacpp
   - light_coding
   - homelab_control
 
@@ -301,8 +299,8 @@ virtualization: false
 | Repo | https://github.com/pxxkachu/mjolnir |
 | OS | **Arch Linux only** (wipe Windows) |
 | Desktop | **GNOME** minimal (Wayland) + **GDM** |
-| AI stack | **Ollama** + CUDA · **`https://ai.lehaus.io`** (xcaddy/Caddy) · Tailscale clients |
-| Gaming | Steam + Proton |
+| AI stack | **llama-cpp** + **ggml-cuda** · **`https://ai.lehaus.io`** (xcaddy/Caddy) · Tailscale clients |
+| Gaming | Deferred |
 | Disk | Samsung **990 PRO 2 TB** PCIe Gen4 NVMe M.2 (`/dev/nvme0n1`) |
 | Bootloader | **systemd-boot** |
 | Disk encryption | Optional LUKS |
@@ -310,4 +308,4 @@ virtualization: false
 | Install guide | [`arch_install.md`](arch_install.md) |
 | Overview | [`README.md`](README.md) |
 | Firewall / no-sleep / persistenced | [`arch_install.md`](arch_install.md) |
-| Additional storage / NAS | TBD when `/home` fills (models + Steam) |
+| Additional storage / NAS | TBD when `/home` fills (GGUF models) |

@@ -2,7 +2,7 @@
 
 Mini-ITX gaming and homelab workstation in a custom **OpenITX** case. **Arch Linux only** on a **Samsung 990 PRO 2 TB** PCIe Gen4 NVMe M.2 SSD.
 
-**Hostname:** `mjolnir` · **User:** `laika` · **Case:** OpenITX · **Use:** local GPU AI server, Steam gaming, light development, homelab control
+**Hostname:** `mjolnir` · **User:** `laika` · **Case:** OpenITX · **Use:** local GPU AI server (llama.cpp), light development, homelab control
 
 **Repo:** [github.com/pxxkachu/mjolnir](https://github.com/pxxkachu/mjolnir)
 
@@ -14,7 +14,7 @@ Mini-ITX gaming and homelab workstation in a custom **OpenITX** case. **Arch Lin
 |-----------|-------|-------|
 | **Case** | **OpenITX** (custom) | Mini-ITX SFF |
 | **CPU** | AMD Ryzen 7 **9800X3D** | PBO Advanced, CO **−35** |
-| **GPU** | NVIDIA RTX **5090** HP OMEN OEM (32 GB) | Fit **confirmed** · `nvidia-open` + Ollama |
+| **GPU** | NVIDIA RTX **5090** HP OMEN OEM (32 GB) | Fit **confirmed** · `nvidia-open` + llama.cpp |
 | **Board** | Gigabyte **B850I AORUS PRO** **Rev 1.0** | Realtek 2.5G + RTL8922AE Wi‑Fi 7 · UEFI / fTPM |
 | **RAM** | G.Skill Ripjaws S5 2×48 GB | **6000 CL30-36-36-30** — BIOS **done** *(kit XMP 6800 failed)* |
 | **Storage** | Samsung **990 PRO** 2 TB PCIe Gen4 NVMe M.2 | `/dev/nvme0n1` · GPT ext4 · Arch only |
@@ -33,8 +33,8 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 |-------|--------|
 | **OS** | Arch Linux (sole OS) |
 | **Desktop** | **GNOME** minimal (Wayland) + GDM |
-| **AI** | Ollama + CUDA · **xcaddy** `/usr/local/bin/caddy` → `https://ai.lehaus.io` (Tailscale) · no sleep · `nvidia-persistenced` |
-| **Gaming** | Steam + Proton |
+| **AI** | **llama-cpp** + **ggml-cuda** · `llama-server` · **xcaddy** `/usr/local/bin/caddy` → `https://ai.lehaus.io` (Tailscale) · no sleep · `nvidia-persistenced` |
+| **Gaming** | Not installed for now (Steam deferred) |
 | **Fans** | CoolerControl for CPU/GPU (no case fans; optional `it87`) |
 
 ---
@@ -51,7 +51,7 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 |------|--------------|-------------|
 | **1. BIOS** | [`bios_optimize.md`](bios_optimize.md) | Boot / CPU / GPU / Smart Fan unlock *(memory already done)* |
 | **2. Full install** | [`scripts/mjolnir-install.sh`](scripts/mjolnir-install.sh) | One script: wipe → pacstrap → **auto postinstall** (do not run postinstall separately) |
-| **3. Verify** | [`arch_install.md`](arch_install.md) | `nvidia-smi`, Tailscale API, CoolerControl, Proton |
+| **3. Verify** | [`arch_install.md`](arch_install.md) | `nvidia-smi`, Tailscale API, CoolerControl, `llama-server` |
 
 **How to run** (step-by-step commands, reboot, chroot notes): [`arch_install.md` — Step-by-step install](arch_install.md#step-by-step-install-follow-in-order)
 
@@ -79,7 +79,7 @@ Full BOM, YAML, and install decisions → [`parts.md`](parts.md)
 
 **Fans:** No case fans. **CoolerControl** on **CPU_FAN** (+ GPU); BIOS unlock for CPU header only
 
-**AI ops:** **`https://ai.lehaus.io`** via **xcaddy** (Cloudflare DNS-01; **not** stock `caddy` / certbot) → Ollama on localhost · Tailscale-only nftables · sleep **masked** · chrony + fstrim · **America/Chicago** · US mirrors (reflector)
+**AI ops:** **`https://ai.lehaus.io`** via **xcaddy** (Cloudflare DNS-01; **not** stock `caddy` / certbot) → `llama-server` on `127.0.0.1:8080` · Tailscale-only nftables · sleep **masked** · chrony + fstrim · **America/Chicago** · US mirrors (reflector)
 
 HTTPS details → [`arch_install.md` — HTTPS: ai.lehaus.io (xcaddy)](arch_install.md#https-ailehausio-xcaddy)
 
@@ -91,7 +91,7 @@ HTTPS details → [`arch_install.md` — HTTPS: ai.lehaus.io (xcaddy)](arch_inst
 |---------|----------------|
 | No POST / RAM training | [`bios_optimize.md`](bios_optimize.md) |
 | WHEA / stutter / GPU power | [`bios_optimize.md`](bios_optimize.md) |
-| Install / GNOME / Ollama / Steam | [`arch_install.md`](arch_install.md) |
+| Install / GNOME / llama.cpp | [`arch_install.md`](arch_install.md) |
 
 ---
 
@@ -109,10 +109,10 @@ ram: 96GB @ 6000 CL30-36-36-30
 storage: Samsung 990 PRO 2TB PCIe Gen4 NVMe M.2 (/dev/nvme0n1)
 aur_helper: paru-bin
 repo: https://github.com/pxxkachu/mjolnir
-ollama_api: https://ai.lehaus.io
+llama_api: https://ai.lehaus.io
+llama_bind: "127.0.0.1:8080"
 workloads:
-  - local_ai_server_ollama
-  - steam_gaming
+  - local_ai_server_llamacpp
   - homelab_control
 docs:
   hardware: parts.md

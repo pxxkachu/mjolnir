@@ -1,5 +1,5 @@
 # Mjolnir — Caddy built with xcaddy (Cloudflare DNS) at /usr/local/bin/caddy
-# Serves https://ai.lehaus.io → Ollama on 127.0.0.1:11434
+# Serves https://ai.lehaus.io → llama-server on 127.0.0.1:8080
 
 [Unit]
 Description=Caddy web server (xcaddy + Cloudflare DNS)

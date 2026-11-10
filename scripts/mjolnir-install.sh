@@ -66,7 +66,7 @@ Defaults (this machine):
   --timezone America/Chicago
   --fs ext4
   --root-size-gib 100
-  Post-install: runs automatically (NVIDIA, GNOME, Ollama, xcaddy, …)
+  Post-install: runs automatically (NVIDIA, GNOME, llama.cpp, xcaddy, …)
 
 Optional:
   --disk /dev/nvmeX     Override target disk
@@ -393,6 +393,7 @@ echo "          Point DNS A ai.lehaus.io → \$(tailscale ip -4)  (Cloudflare DN
 echo "          sudoedit /etc/caddy/caddy.env   # CF_API_TOKEN=..."
 echo "          /usr/local/bin/caddy version    # xcaddy build (not stock /usr/bin/caddy)"
 echo "          sudo systemctl restart caddy"
-echo "          curl https://ai.lehaus.io/api/tags"
+echo "          ln -sfn ~/models/<file>.gguf ~/models/active.gguf && sudo systemctl start llama-server"
+echo "          curl https://ai.lehaus.io/v1/models"
 echo "    BIOS Smart Fan unlock: bios_optimize.md"
 echo "    Optional later: sudo /opt/mjolnir/scripts/mjolnir-postinstall.sh --user ${USERNAME} --it87"

@@ -1,5 +1,5 @@
-# Mjolnir — HTTPS front for Ollama on Tailscale
-# Domain: ai.lehaus.io  →  reverse_proxy 127.0.0.1:11434
+# Mjolnir — HTTPS front for llama-server on Tailscale
+# Domain: ai.lehaus.io  →  reverse_proxy 127.0.0.1:8080
 #
 # Chosen stack: xcaddy-built /usr/local/bin/caddy + Cloudflare DNS plugin
 #   (NOT the stock Arch caddy package; NOT certbot/lego)
@@ -21,6 +21,6 @@ ai.lehaus.io {
 
 	encode gzip
 
-	# Ollama HTTP API (local only; Caddy terminates TLS)
-	reverse_proxy 127.0.0.1:11434
+	# llama-server (OpenAI-compatible /v1 + WebUI); local only; Caddy terminates TLS
+	reverse_proxy 127.0.0.1:8080
 }
